@@ -8,6 +8,7 @@ import nflreadpy as nfl
 import pandas as pd
 from datetime import datetime, timedelta
 
+DEBUG = True
 bettable_columns = ['passing_yards','passing_tds','completions','attempts','passing_interceptions','targets','receptions','receiving_yards','receiving_tds','carries','rushing_yards','rushing_tds']
 
 def load_team_data(year=2025):
@@ -15,6 +16,9 @@ def load_team_data(year=2025):
 
 def load_player_data(year=2025):
     return nfl.load_player_stats(year).to_pandas()
+
+def load_depth_data(year=2025):
+    return nfl.load_depth_charts(year).to_pandas()
 
 def upcoming_schedule(days=7):
     schedule = nfl.load_schedules(2025).to_pandas()
@@ -35,6 +39,8 @@ def get_pos(team,pos):
 def find_player(name):
     player_stats = load_player_data()
     df = player_stats[player_stats['player_display_name']==name]
+    if df.empty and DEBUG:
+        print(f'[DEBUG] find_player(): No rows for {name}')
     df = df.drop(columns = ['player_id','player_name','position_group','season'])
     keep_cols = ['player_display_name']+['headshot_url'] +['week']+ ['position'] + ['team'] + ['opponent_team'] + bettable_columns
     df = df[keep_cols]

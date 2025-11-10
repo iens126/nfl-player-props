@@ -14,6 +14,7 @@ from io import StringIO, BytesIO
 from core.data_loader import *
 from core.stats_utils import *
 from core.stat_visualization import *
+from core.monte_carlo_sim import *
 
 team_stats = load_team_data()
 player_stats = load_player_data()
@@ -309,6 +310,58 @@ def submit():
         plt.close(fig)  # prevent notebook popup
 
     viz_var.trace_add("write", update_visualization)
+
+    # === Simulation Section ===
+    sim_frame = Frame(scrollable_frame, bg="#2b2b2b")
+    sim_frame.pack(pady=(15, 25))
+
+    Label(sim_frame, text="Run Simulation:", bg="#2b2b2b", fg="white",
+          font=("Helvetica", 16, "bold")).pack(anchor="w", padx=20)
+
+    sim_inner = Frame(sim_frame, bg="#2b2b2b")
+    sim_inner.pack(anchor="w", padx=20, pady=10)
+
+    # Stat selection dropdown
+    Label(sim_inner, text="Select Stat:", bg="#2b2b2b", fg="white").grid(row=0, column=0, padx=5, pady=5)
+    sim_stat_var = StringVar(value="select:")
+    OptionMenu(sim_inner, sim_stat_var, *available_stats).grid(row=0, column=1, padx=5, pady=5)
+
+    # Line input
+    Label(sim_inner, text="Target Line:", bg="#2b2b2b", fg="white").grid(row=0, column=2, padx=5, pady=5)
+    line_entry = Entry(sim_inner, width=10)
+    line_entry.grid(row=0, column=3, padx=5, pady=5)
+
+    # Output label
+    result_label = Label(sim_inner, text="Confidence: —", bg="#2b2b2b", fg="#cccccc",
+                     font=("Helvetica", 12, "italic"))
+    result_label.grid(row=1, column=0, columnspan=4, pady=10)
+
+    # Run simulation function
+    def run_simulation():
+        stat_cat = sim_stat_var.get()
+        line_val = line_entry.get()
+
+        if stat_cat == "select:" or not line_val:
+            messagebox.showwarning("Missing Input", "Please select a stat and enter a target line.")
+            return
+    
+        try:
+            line_val = float(line_val)
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Target line must be a number.")
+            return
+
+        try:
+            confidence = run_sim(player_name, def_var.get(), stat_cat, line_val)*100
+            result_label.config(text=f"Confidence: {confidence:.1f}%", fg="#00cc66")
+        except Exception as e:
+            messagebox.showerror("Simulation Error", f"An error occurred while running simulation:\n{e}")
+            result_label.config(text="Confidence: —", fg="red")
+
+    # Run button
+    Button(sim_inner, text="Run Simulation", command=run_simulation,
+           bg="#3a86ff", fg="white", font=("Helvetica", 12, "bold")).grid(row=0, column=4, padx=10, pady=5)
+
 
     # ---- Week-by-week Table ----
     Label(scrollable_frame, text="Week-by-Week Performance:",
