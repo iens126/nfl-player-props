@@ -12,7 +12,7 @@ from rapidfuzz import process, fuzz
 import statistics
 #_______________________________________________________________________________________________________________________
 
-DEBUG = True
+DEBUG = False
 
 # Create function to get league average allowed of a specific stat category. To be used later in weighting predictions.
 def def_league_stats(stat_cat):
@@ -111,7 +111,7 @@ def pass_def_index(team_stats):
 
 # Create function that makes the weight based on the players standard deviation, and defenses Z score (using league-wide average
 # and standard deviation to calculate.
-def create_weight(name, def_team, stat_cat, def_index_df, k = 0.6):
+def create_weight(name, def_team, stat_cat, k = 0.6):
     STAT_MAP = {
     'passing_yards': ('passing_yards', 'pass'),
     'passing_tds': ('passing_tds', 'pass'),
@@ -125,8 +125,9 @@ def create_weight(name, def_team, stat_cat, def_index_df, k = 0.6):
     }
     pos = find_player(name)['position'].unique()[0]
 
-    if pos == 'QB':
-        zdef = float(def_index_df.loc[def_index_df['def_team'] == def_team, 'dsi'])
+    if pos == 'QB
+        k = 0.205
+        #zdef = float(def_index_df.loc[def_index_df['def_team'] == def_team, 'dsi'])
         player_std = find_player(name)[stat_cat].std()
         league_avg = def_league_stats(stat_cat)[0]
         league_std = def_league_stats(stat_cat)[1]
@@ -135,7 +136,7 @@ def create_weight(name, def_team, stat_cat, def_index_df, k = 0.6):
         elif STAT_MAP[stat_cat][1] == 'run':
             team_avg = run_def(def_team)[stat_cat].mean()
 
-        #zdef = (team_avg - league_avg)/ league_std
+        zdef = (team_avg - league_avg)/ league_std
     
         weight = k * player_std * (-zdef)
 
@@ -169,8 +170,10 @@ def create_weight(name, def_team, stat_cat, def_index_df, k = 0.6):
 # the player gets over a specific line of the stat.
 def run_sim(name, def_team, stat_cat, line):
     results = []
+    window = 3
     n_simulations = 10000
     df = find_player(name)
+    df = df[df['week'] > df['week'].max() - window]
     values = df[stat_cat]
     #values = values.round(-1)
     a = values.min()
@@ -187,4 +190,165 @@ def run_sim(name, def_team, stat_cat, line):
 #_______________________________________________________________________________________________________________________
 
 
+# ****** PROCESS USED TO TUNE K VALUES, WILL LATER BE DEPRECATED ONCE K IS TUNED ******
+weeks = [3, 4, 5, 6, 7, 8]
+import numpy as np
+qbs = ['Aaron Rodgers', 'Matthew Stafford', 'Jared Goff','Dak Prescott', 'Patrick Mahomes', 'Sam Darnold', 'Josh Allen', 'Daniel Jones', 'Justin Herbert', 'Drake Maye','Jordan Love', 'Baker Mayfield', 'Caleb Williams','Bo Nix','Trevor Lawrence','Tua Tagovailoa','Jalen Hurts','Geno Smith','Cam Ward', 'Spencer Rattler']
+
+def get_actuals(pos, stat_cat, week,max_week_only=True):
+    player_stats = load_player_data()
+    player_stats = player_stats[player_stats['position'] == pos]
+    if max_week_only:
+        player_stats = player_stats[player_stats['week'] <= week]
+    player_stats = player_stats[['player_display_name','opponent_team','week',stat_cat]]
+    player_stats = player_stats[player_stats[stat_cat] != 0]
+    return player_stats
+
+def make_pred(name):
+    preds = []
+    actuals = []
+    n_simulations = 10000
+    window = 3
+    for week in weeks:
+        pre = get_actuals('QB','passing_yards', week)
+        pre = pre[pre['player_display_name'] == name]
+        pre = pre[pre['week'] > week - window]
+        values = pre['passing_yards']
+        a,b,c = values.min(),values.max(), values.mean()
+        #print(week, 'Min:',a,'Max:',b,'Mean:',c)
+        dist = np.random.triangular(a,c,b, n_simulations)
+        pred = np.mean(dist)
+        act = get_actuals('QB','passing_yards', week+1)
+        act = act[act['player_display_name'] == name]
+        act = act[act['week'] == week +1]
+        act = act['passing_yards'].values
+        if act.size == 0:
+            continue
+        else:
+            preds.append(pred)
+            actuals.append(act)
+    return preds, actuals
+
+'''
+def weight_def(name,k):
+    window = 3
+    w = []
+    for week in weeks:
+       player = get_actuals('QB','passing_yards', week)
+        player = player[player['player_display_name'] == name]
+        player = player[player['week'] > week - window]
+        values = player['passing_yards']
+        player_std = values.std()
+        
+        stats = get_actuals('QB','passing_yards',week+1,max_week_only=False)
+        stats = stats[stats['player_display_name'] == name]
+        stats = stats[stats['week'] == week+1]
+        if stats.empty:
+            continue
+        else:
+            defense = stats['opponent_team'].values[0]
+        
+            team_stats = load_team_data()
+            defense_stats = team_stats[team_stats['opponent_team'] == defense]
+            defense_stats = defense_stats[defense_stats['week'] > week+1 -window]
+            defense_values = defense_stats['passing_yards']
+            defense_avg = defense_values.mean()
+
+            league_avg, league_std = def_league_stats('passing_yards')
+
+            zdef = (defense_avg - league_avg)/league_std
+
+            weight = k * player_std *(-zdef)
+
+            w.append(weight)
+
+    return w
+'''
+def weight_def(name, k):
+    window = 3
+    w = []
+    player_data = load_player_data()  # load once
+    team_stats = load_team_data()     # load once
+
+    for week in weeks:
+        # Get player stats for previous `window` weeks
+        player = player_data[
+            (player_data['position'] == 'QB') &
+            (player_data['player_display_name'] == name) &
+            (player_data['week'] <= week) &
+            (player_data['week'] > week - window)
+        ]
+        if player.empty:
+            continue
+
+        values = player['passing_yards']
+        player_std = values.std()
+
+        # Find the opponent for NEXT week
+        next_week = player_data[
+            (player_data['position'] == 'QB') &
+            (player_data['player_display_name'] == name) &
+            (player_data['week'] == week + 1)
+        ]
+        if next_week.empty:
+            continue
+
+        defense = next_week['opponent_team'].iloc[0]
+
+        # Compute defense performance over its last few games
+        defense_stats = team_stats[
+            (team_stats['opponent_team'] == defense) &
+            (team_stats['week'] <= week + 1) &
+            (team_stats['week'] > week + 1 - window)
+        ]
+        if defense_stats.empty:
+            continue
+
+        defense_avg = defense_stats['passing_yards'].mean()
+        league_avg, league_std = def_league_stats('passing_yards')
+        zdef = (defense_avg - league_avg) / league_std
+
+        weight = k * player_std * (-zdef)
+        w.append(weight)
+
+        if DEBUG:
+            print(f"[DEBUG] Week {week+1}: vs {defense}, zdef={zdef:.2f}, weight={weight:.2f}")
+
+    return w
+
+def tune_k_for_player(name):
+    k_grid = np.linspace(0,1.2,13)
+
+    preds, acts = make_pred(name)
+    preds, acts = np.array(preds), np.array(acts)
+
+    results = []
+    for k in k_grid:
+        weights = np.array(weight_def(name, k))
+        adjusted = preds + weights
+
+        mae = np.mean(np.abs(adjusted - acts))
+        rmse = np.sqrt(np.mean((adjusted -acts)**2))
+        results.append({'k':k, 'MAE':mae, 'RMSE':rmse})
+        if DEBUG:
+            print(f'[DEBUG] {name}: k={k:.2f}, MAE={mae:.2f}, RMSE={rmse:.2f}')
+
+    res_df = pd.DataFrame(results)
+    best_k = res_df.loc[res_df['RMSE'].idxmin(),'k']
+    print(f'\nBest k for {name}: {best_k:.2f}')
+    return res_df, best_k
+
+best = []
+for qb in qbs:
+    print(f'\n--- {qb} ---')
+    res_df, best_k = tune_k_for_player(qb)
+    best.append(best_k)
+    
+best_k_qb = pd.DataFrame(best)
+print(best_k_qb.mean())
+
+        
+        
+        
+        
 
