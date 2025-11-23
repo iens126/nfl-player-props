@@ -125,8 +125,8 @@ def create_weight(name, def_team, stat_cat, k = 0.6):
     }
     pos = find_player(name)['position'].unique()[0]
 
-    if pos == 'QB
-        k = 0.205
+    if pos == 'QB':
+        k = 0.2
         #zdef = float(def_index_df.loc[def_index_df['def_team'] == def_team, 'dsi'])
         player_std = find_player(name)[stat_cat].std()
         league_avg = def_league_stats(stat_cat)[0]
@@ -141,7 +141,14 @@ def create_weight(name, def_team, stat_cat, k = 0.6):
         weight = k * player_std * (-zdef)
 
     else:
-        k = .3
+        if pos == 'RB':
+            k = .12
+        elif pos == 'WR':
+            k = .23
+        elif pos == 'TE':
+            k = .01
+        else:
+            k = .3
         player_std = find_player(name)[stat_cat].std()
         rank = get_pos_rank(name)
         if rank == 1:
@@ -194,6 +201,9 @@ def run_sim(name, def_team, stat_cat, line):
 weeks = [3, 4, 5, 6, 7, 8]
 import numpy as np
 qbs = ['Aaron Rodgers', 'Matthew Stafford', 'Jared Goff','Dak Prescott', 'Patrick Mahomes', 'Sam Darnold', 'Josh Allen', 'Daniel Jones', 'Justin Herbert', 'Drake Maye','Jordan Love', 'Baker Mayfield', 'Caleb Williams','Bo Nix','Trevor Lawrence','Tua Tagovailoa','Jalen Hurts','Geno Smith','Cam Ward', 'Spencer Rattler']
+rbs = ['Jonathan Taylor','James Cook','Bijan Robinson', 'Derrick Henry', 'Kyren Williams', 'Jahmyr Gibbs', 'Christian McCaffrey','Breece Hall', 'Travis Etienne', 'Saquon Barkley', 'Josh Jacobs','Ashton Jeanty']
+wrs = ['Jaxon Smith-Njigba', 'George Pickens', 'Drake London', 'Tetairoa McMillan', 'Justin Jefferson', 'Amon-Ra St. Brown', 'Jaylen Waddle', 'Emeka Egbuka', 'Zay Flowers', 'DeVonta Smith', 'Chris Olave', 'Stefon Diggs', 'Courtland Sutton', 'Ladd McConkey', 'Khalil Shakir']
+tes = ['Trey McBride', 'Travis Kelce', 'Tyler Warren', 'Dalton Schultz', 'Juwan Johnson', 'Sam LaPorta', 'Kyle Pitts', 'Hunter Henry', 'Harold Fannin Jr.', 'Dallas Goedert', 'Mark Andrews']
 
 def get_actuals(pos, stat_cat, week,max_week_only=True):
     player_stats = load_player_data()
@@ -210,23 +220,25 @@ def make_pred(name):
     n_simulations = 10000
     window = 3
     for week in weeks:
-        pre = get_actuals('QB','passing_yards', week)
+        pre = get_actuals('TE','receiving_yards', week)
         pre = pre[pre['player_display_name'] == name]
         pre = pre[pre['week'] > week - window]
-        values = pre['passing_yards']
+        values = pre['receiving_yards']
         a,b,c = values.min(),values.max(), values.mean()
         #print(week, 'Min:',a,'Max:',b,'Mean:',c)
         dist = np.random.triangular(a,c,b, n_simulations)
         pred = np.mean(dist)
-        act = get_actuals('QB','passing_yards', week+1)
+        act = get_actuals('TE','receiving_yards', week+1)
         act = act[act['player_display_name'] == name]
         act = act[act['week'] == week +1]
-        act = act['passing_yards'].values
+        act = act['receiving_yards'].values
         if act.size == 0:
             continue
         else:
             preds.append(pred)
             actuals.append(act)
+    if DEBUG:        
+        print("DEBUG make_pred:", name, "preds:", len(preds), "acts:", len(actuals))
     return preds, actuals
 
 '''
@@ -273,7 +285,7 @@ def weight_def(name, k):
     for week in weeks:
         # Get player stats for previous `window` weeks
         player = player_data[
-            (player_data['position'] == 'QB') &
+            (player_data['position'] == 'TE') &
             (player_data['player_display_name'] == name) &
             (player_data['week'] <= week) &
             (player_data['week'] > week - window)
@@ -281,12 +293,12 @@ def weight_def(name, k):
         if player.empty:
             continue
 
-        values = player['passing_yards']
+        values = player['receiving_yards']
         player_std = values.std()
 
         # Find the opponent for NEXT week
         next_week = player_data[
-            (player_data['position'] == 'QB') &
+            (player_data['position'] == 'TE') &
             (player_data['player_display_name'] == name) &
             (player_data['week'] == week + 1)
         ]
@@ -298,14 +310,14 @@ def weight_def(name, k):
         # Compute defense performance over its last few games
         defense_stats = team_stats[
             (team_stats['opponent_team'] == defense) &
-            (team_stats['week'] <= week + 1) &
-            (team_stats['week'] > week + 1 - window)
+            (team_stats['week'] <= week) &
+            (team_stats['week'] > week - window)
         ]
         if defense_stats.empty:
             continue
 
-        defense_avg = defense_stats['passing_yards'].mean()
-        league_avg, league_std = def_league_stats('passing_yards')
+        defense_avg = defense_stats['receiving_yards'].mean()
+        league_avg, league_std = def_league_stats('receiving_yards')
         zdef = (defense_avg - league_avg) / league_std
 
         weight = k * player_std * (-zdef)
@@ -313,6 +325,7 @@ def weight_def(name, k):
 
         if DEBUG:
             print(f"[DEBUG] Week {week+1}: vs {defense}, zdef={zdef:.2f}, weight={weight:.2f}")
+            print("DEBUG weight_def:", name, "player_window=", player.empty, "next_week=", next_week.empty,"def_stats=", defense_stats.empty)
 
     return w
 
@@ -339,13 +352,13 @@ def tune_k_for_player(name):
     return res_df, best_k
 
 best = []
-for qb in qbs:
-    print(f'\n--- {qb} ---')
-    res_df, best_k = tune_k_for_player(qb)
+for te in tes:
+    print(f'\n--- {te} ---')
+    res_df, best_k = tune_k_for_player(te)
     best.append(best_k)
     
-best_k_qb = pd.DataFrame(best)
-print(best_k_qb.mean())
+best_k_te = pd.DataFrame(best)
+print(best_k_te.mean())
 
         
         
