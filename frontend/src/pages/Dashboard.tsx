@@ -75,6 +75,16 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary.data, schedule.data])
 
+  const canSwap = !!summary.data && !!opponent
+
+  function swapMatchup() {
+    if (!summary.data || !opponent) return
+    const offenseTeam = summary.data.team
+    setTeam(opponent)
+    setOpponent(offenseTeam)
+    setPlayer(null)
+  }
+
   const line = useMemo(() => {
     const n = parseFloat(lineInput)
     return Number.isFinite(n) && n > 0 ? n : null
@@ -127,9 +137,23 @@ export default function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="space-y-6">
+        <div className="order-2 space-y-6 lg:order-1">
           <Card>
-            <SectionHeading title="Select Matchup" />
+            <SectionHeading
+              title="Select Matchup"
+              action={
+                <button
+                  type="button"
+                  onClick={swapMatchup}
+                  disabled={!canSwap}
+                  title="Swap offense and defense"
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-text-muted transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <ArrowsRightLeftIcon className="h-3.5 w-3.5" />
+                  Swap
+                </button>
+              }
+            />
             <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
               <SearchSelect label="Position" placeholder="Any position" items={positionItems} value={position} onChange={setPosition} />
               <SearchSelect label="Team" placeholder="Any team" items={teamItems} value={team} onChange={setTeam} />
@@ -262,7 +286,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
+        <aside className="order-1 space-y-4 lg:order-2 lg:sticky lg:top-20 lg:self-start">
           <Card>
             <SectionHeading title="Upcoming Games" action={<CalendarDaysIcon className="h-4 w-4 text-text-faint" />} />
             {schedule.loading && <Skeleton className="h-40 w-full" />}
