@@ -7,6 +7,7 @@ filtering, and gives the rest of the app (and the web backend) one place to
 force a refresh.
 """
 
+import os
 import time
 
 import nflreadpy as nfl
@@ -60,6 +61,53 @@ def load_player_data(year=None):
 
 def load_depth_data(year=None):
     return _cached(f"depth_charts:{year}", lambda: nfl.load_depth_charts(year).to_pandas())
+
+
+# How many seasons of history to pull for career views and model training.
+# Every extra season is roughly 1MB in memory once pruned, so this is cheap,
+# but the further back we go the less the data resembles the current league.
+CAREER_SEASONS = int(os.environ.get("CAREER_SEASONS", "8"))
+
+_CAREER_COLUMNS = [
+    'player_display_name', 'position', 'season', 'week', 'season_type',
+    'team', 'opponent_team',
+] + bettable_columns
+
+_CATEGORICAL_COLUMNS = ['player_display_name', 'position', 'team', 'opponent_team', 'season_type']
+
+
+def load_career_data():
+    """Multi-season game logs, for career hit rates and model training.
+
+    load_player_data() deliberately stays scoped to the current season - the
+    defense rankings and matchup weights are about *this* year's teams. Career
+    questions ("how often has he cleared 60 yards?") and anything we want to
+    train a model on need the longer history, so they come from here instead.
+
+    Columns are pruned and the string columns cast to categoricals, which takes
+    roughly 130k rows from ~113MB down to under 10MB - worth doing on a
+    512MB free-tier box.
+    """
+    def _load():
+        current = nfl.get_current_season()
+        seasons = list(range(current - CAREER_SEASONS + 1, current + 1))
+        df = nfl.load_player_stats(seasons=seasons).to_pandas()
+        df = df[[c for c in _CAREER_COLUMNS if c in df.columns]].copy()
+        for col in _CATEGORICAL_COLUMNS:
+            if col in df.columns:
+                df[col] = df[col].astype('category')
+        return df.sort_values(['season', 'week'])
+
+    return _cached("career_stats", _load)
+
+
+def find_player_career(name, include_postseason=True):
+    """Every recorded game for `name`, oldest first, across loaded seasons."""
+    df = load_career_data()
+    out = df[df['player_display_name'] == name]
+    if not include_postseason and 'season_type' in out.columns:
+        out = out[out['season_type'] == 'REG']
+    return out.sort_values(['season', 'week'])
 
 
 def load_current_rosters():

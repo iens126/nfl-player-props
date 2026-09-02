@@ -47,6 +47,8 @@ class GameLogResponse(BaseModel):
 
 class ChartWeek(BaseModel):
     week: int
+    season: Optional[int] = None
+    label: Optional[str] = None
     opponent: Optional[str] = None
     player_value: Optional[float] = None
     defense_allowed: Optional[float] = None
@@ -115,11 +117,56 @@ class ProjectionResponse(BaseModel):
     # whether the models agree (a tight cluster) or the answer depends heavily
     # on the assumed distribution shape (a wide spread).
     alternatives: dict[str, float]
+    # How often the player actually reached this line, by lookback window.
+    hit_rates: list["HitRate"] = []
+    ml_projection: Optional[float] = None
+
+
+class HitRate(BaseModel):
+    window: str
+    games: int
+    hits: int
+    rate: float
+    average: float
+
+
+class FeatureImportance(BaseModel):
+    feature: str
+    label: str
+    share: float
 
 
 class ModelInfo(BaseModel):
     key: str
     description: str
+    # Layman-facing explanation of the approach, what it looks at, and where
+    # to read more about the technique itself.
+    summary: Optional[str] = None
+    attends_to: list[str] = []
+    learn_more_url: Optional[str] = None
+    learn_more_label: Optional[str] = None
+    trained: bool = False
+    metrics: Optional[dict] = None
+    importance: list[FeatureImportance] = []
+
+
+class BookLine(BaseModel):
+    book: str
+    line: Optional[float] = None
+    over_price: Optional[float] = None
+    under_price: Optional[float] = None
+    implied_over: Optional[float] = None
+    implied_under: Optional[float] = None
+    last_update: Optional[str] = None
+
+
+class OddsResponse(BaseModel):
+    status: str
+    message: Optional[str] = None
+    books: list[BookLine] = []
+    market: Optional[str] = None
+    fetched_at: Optional[str] = None
+    requests_remaining: Optional[str] = None
 
 
 class ScheduleGame(BaseModel):

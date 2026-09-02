@@ -4,6 +4,7 @@ import {
   type DefenseSummary,
   type GameLogResponse,
   type ModelInfo,
+  type OddsResponse,
   type PlayerListItem,
   type PlayerSummary,
   type ProjectionRequest,
@@ -62,7 +63,12 @@ export const api = {
   health: () => request<{ status: string }>('/health'),
   teams: () => request<Team[]>('/api/teams'),
   positions: () => request<string[]>('/api/positions'),
-  models: () => request<ModelInfo[]>('/api/models'),
+  models: (stat?: string) =>
+    request<ModelInfo[]>(`/api/models${stat ? `?stat=${encodeURIComponent(stat)}` : ''}`),
+  odds: (params: { player: string; team: string; opponent: string; stat: string }) => {
+    const qs = new URLSearchParams(params)
+    return request<OddsResponse>(`/api/odds?${qs.toString()}`)
+  },
   players: (params: { team?: string; position?: string; q?: string; limit?: number }) => {
     const qs = new URLSearchParams()
     if (params.team) qs.set('team', params.team)
@@ -73,7 +79,7 @@ export const api = {
   },
   playerSummary: (name: string) => request<PlayerSummary>(`/api/players/${encodeURIComponent(name)}`),
   playerGameLog: (name: string) => request<GameLogResponse>(`/api/players/${encodeURIComponent(name)}/gamelog`),
-  playerChart: (name: string, stat: string, opponent: string, range: '3' | '5' | '10' | 'season') => {
+  playerChart: (name: string, stat: string, opponent: string, range: '3' | '5' | '10' | 'season' | 'career') => {
     const qs = new URLSearchParams({ stat, opponent, range })
     return request<ChartResponse>(`/api/players/${encodeURIComponent(name)}/chart?${qs.toString()}`)
   },

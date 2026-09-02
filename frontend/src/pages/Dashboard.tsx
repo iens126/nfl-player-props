@@ -17,10 +17,13 @@ import { DefenseMatchup } from '../components/player/DefenseMatchup'
 import { Collapsible } from '../components/common/Collapsible'
 import { HowItWorks } from '../components/layout/HowItWorks'
 import { ModelConsensus } from '../components/player/ModelConsensus'
+import { HitRatePanel } from '../components/player/HitRatePanel'
+import { OddsComparison } from '../components/player/OddsComparison'
+import { ModelInfoPanel } from '../components/player/ModelInfoPanel'
 import { statLabel } from '../lib/statLabels'
 import { matchupColors } from '../lib/teamColors'
 import { useTheme } from '../lib/theme'
-import type { ModelKey, ProjectionResponse } from '../api/types'
+import type { ModelKey, OddsResponse, ProjectionResponse } from '../api/types'
 
 const PASS_TYPE_STATS = new Set([
   'passing_yards', 'passing_tds', 'completions', 'attempts', 'passing_interceptions',
@@ -50,7 +53,7 @@ export default function Dashboard() {
   const teams = useAsync(() => api.teams(), [])
   const positions = useAsync(() => api.positions(), [])
   const schedule = useAsync(() => api.scheduleUpcoming(21), [])
-  const models = useAsync(() => api.models(), [])
+  const models = useAsync(() => api.models(stat ?? undefined), [stat])
 
   const players = useAsync(
     () => api.players({ team: team ?? undefined, position: position ?? undefined, limit: 1000 }),
@@ -132,6 +135,32 @@ export default function Dashboard() {
     }, 350)
     return () => clearTimeout(handle)
   }, [player, opponent, stat, line, model])
+
+  // Odds are fetched per player/stat/matchup only - each call costs provider
+  // credits, so nothing here refetches on a line change.
+  const [odds, setOdds] = useState<{ data: OddsResponse | null; loading: boolean }>({
+    data: null,
+    loading: false,
+  })
+
+  useEffect(() => {
+    const team = summary.data?.team
+    if (!player || !opponent || !stat || !team) {
+      setOdds({ data: null, loading: false })
+      return
+    }
+    let cancelled = false
+    setOdds({ data: null, loading: true })
+    api
+      .odds({ player, team, opponent, stat })
+      .then((data) => !cancelled && setOdds({ data, loading: false }))
+      .catch(() => !cancelled && setOdds({ data: null, loading: false }))
+    return () => {
+      cancelled = true
+    }
+  }, [player, opponent, stat, summary.data?.team])
+
+  const activeModelInfo = (models.data ?? []).find((m) => m.key === model) ?? null
 
   const positionItems: SelectItem[] = (positions.data ?? []).map((p) => ({ value: p, label: p }))
   const teamItems: SelectItem[] = (teams.data ?? []).map((t) => ({ value: t.abbr, label: `${t.abbr} — ${t.name}`, accent: t.color }))
@@ -261,9 +290,16 @@ export default function Dashboard() {
                   {opponent && line !== null && projection.loading && <ProjectionSkeleton />}
                   {opponent && line !== null && projection.error && <ErrorState message={projection.error} />}
                   {opponent && line !== null && !projection.loading && projection.data && (
-                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-                      <OverUnderPanel result={projection.data} />
-                      <ModelConsensus result={projection.data} />
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                        <OverUnderPanel result={projection.data} />
+                        <ModelConsensus result={projection.data} />
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                        <HitRatePanel result={projection.data} />
+                        <OddsComparison odds={odds.data} result={projection.data} loading={odds.loading} />
+                        <ModelInfoPanel info={activeModelInfo} />
+                      </div>
                     </div>
                   )}
                 </div>
@@ -273,7 +309,11 @@ export default function Dashboard() {
                 <Card>
                   <SectionHeading
                     title="Performance Chart"
-                    subtitle={`${summary.data.team} ${statLabel(stat)} by week, against what ${opponent} allows`}
+                    subtitle={
+                      range === 'career'
+                        ? `${summary.data.team} ${statLabel(stat)} across their career, against what ${opponent} allows`
+                        : `${summary.data.team} ${statLabel(stat)} by week, against what ${opponent} allows`
+                    }
                   />
                   {chart.loading && <Skeleton className="h-72 w-full" />}
                   {chart.error && <ErrorState message={chart.error} />}

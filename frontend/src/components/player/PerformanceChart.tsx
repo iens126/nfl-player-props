@@ -13,13 +13,14 @@ import type { ChartResponse } from '../../api/types'
 import type { MatchupColors } from '../../lib/teamColors'
 import { statLabel } from '../../lib/statLabels'
 
-export type ChartRange = '3' | '5' | '10' | 'season'
+export type ChartRange = '3' | '5' | '10' | 'season' | 'career'
 
 const RANGE_OPTIONS: { value: ChartRange; label: string }[] = [
   { value: '3', label: 'Last 3' },
   { value: '5', label: 'Last 5' },
   { value: '10', label: 'Last 10' },
   { value: 'season', label: 'Season' },
+  { value: 'career', label: 'Career' },
 ]
 
 export function PerformanceChart({
@@ -40,11 +41,19 @@ export function PerformanceChart({
   colors: MatchupColors
 }) {
   const data = chart.weeks.map((w) => ({
-    week: `W${w.week}`,
+    week: w.label ?? `W${w.week}`,
     opponent: w.opponent,
     player: w.player_value,
     defense: w.defense_allowed,
   }))
+
+  // Career labels ("'23 W12") are roughly twice as wide as in-season ones
+  // ("W12"), so the number of ticks that fit depends on the label, not just
+  // the point count. Aim for a tick roughly every 70px of plot width.
+  const longestLabel = data.reduce((max, d) => Math.max(max, d.week.length), 0)
+  const maxTicks = Math.max(3, Math.floor(60 / Math.max(longestLabel, 1)))
+  const tickInterval =
+    data.length > maxTicks ? Math.ceil(data.length / maxTicks) - 1 : ('preserveStartEnd' as const)
 
   return (
     <div>
@@ -80,7 +89,13 @@ export function PerformanceChart({
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
-            <XAxis dataKey="week" tick={{ fill: 'var(--color-text-faint)', fontSize: 12 }} axisLine={{ stroke: 'var(--color-border)' }} tickLine={false} />
+            <XAxis
+              dataKey="week"
+              tick={{ fill: 'var(--color-text-faint)', fontSize: 12 }}
+              axisLine={{ stroke: 'var(--color-border)' }}
+              tickLine={false}
+              interval={tickInterval}
+            />
             {/* Wide enough for three-digit yardage totals - a narrower axis clips them. */}
             <YAxis tick={{ fill: 'var(--color-text-faint)', fontSize: 12 }} axisLine={false} tickLine={false} width={46} />
             <Tooltip

@@ -45,6 +45,8 @@ export interface GameLogResponse {
 
 export interface ChartWeek {
   week: number
+  season: number | null
+  label: string | null
   opponent: string | null
   player_value: number | null
   defense_allowed: number | null
@@ -79,11 +81,64 @@ export interface DefenseSummary {
   rushing: DefenseSection
 }
 
-export type ModelKey = 'ensemble' | 'lognormal' | 'negbin' | 'empirical' | 'triangular'
+export type ModelKey = 'ml' | 'ensemble' | 'lognormal' | 'negbin' | 'empirical' | 'triangular'
+
+export interface FeatureImportance {
+  feature: string
+  label: string
+  share: number
+}
+
+export interface ModelMetrics {
+  val_mae: number
+  val_r2: number
+  baseline_mae: number
+  brier: number
+  stated_rate: number
+  actual_rate: number
+  val_rows: number
+  holdout_season: number
+}
 
 export interface ModelInfo {
   key: ModelKey
   description: string
+  summary: string | null
+  attends_to: string[]
+  learn_more_url: string | null
+  learn_more_label: string | null
+  trained: boolean
+  metrics: ModelMetrics | null
+  importance: FeatureImportance[]
+}
+
+export type HitRateWindow = 'last_3' | 'last_5' | 'last_10' | 'season' | 'career'
+
+export interface HitRate {
+  window: HitRateWindow
+  games: number
+  hits: number
+  rate: number
+  average: number
+}
+
+export interface BookLine {
+  book: string
+  line: number | null
+  over_price: number | null
+  under_price: number | null
+  implied_over: number | null
+  implied_under: number | null
+  last_update: string | null
+}
+
+export interface OddsResponse {
+  status: 'ok' | 'not_configured' | 'no_market' | 'no_event' | 'error'
+  message: string | null
+  books: BookLine[]
+  market: string | null
+  fetched_at: string | null
+  requests_remaining: string | null
 }
 
 export interface ProjectionRequest {
@@ -113,6 +168,9 @@ export interface ProjectionResponse {
   window_games: number
   /** Every model's over probability for this line, keyed by model name. */
   alternatives: Record<string, number>
+  /** How often the player actually reached this line, by lookback window. */
+  hit_rates: HitRate[]
+  ml_projection: number | null
 }
 
 export interface ScheduleGame {

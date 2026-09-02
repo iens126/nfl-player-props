@@ -337,6 +337,7 @@ def ensemble(
 
 
 MODELS = {
+    'ml': 'Trained ridge regression - learned from eight seasons of game logs',
     'ensemble': 'Ensemble - parametric shape blended with the player\'s own history',
     'lognormal': 'Zero-inflated lognormal - continuous, right-skewed yardage',
     'negbin': 'Negative binomial - discrete counting stats',

@@ -14,3 +14,7 @@ services:
         value: http://localhost:5173
         # Update this in the Render dashboard once the frontend is deployed,
         # e.g. https://your-app.vercel.app (comma-separate multiple origins).
+      # Optional: live sportsbook odds. Get a free key at the-odds-api.com
+      # and set it in the Render dashboard (leave unset to disable the panel).
+      - key: ODDS_API_KEY
+        sync: false

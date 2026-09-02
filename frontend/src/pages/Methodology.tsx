@@ -48,7 +48,102 @@ export default function Methodology() {
         </Card>
 
         <Card>
-          <SectionHeading title="Projection Model" />
+          <SectionHeading title="Trained Model" subtitle="The default when you pick &quot;Trained ridge regression&quot;" />
+          <div className="space-y-3 text-sm leading-relaxed text-text-muted">
+            <p>
+              Nothing on this page is a language model's opinion about a game. The trained
+              model is a{' '}
+              <a
+                href="https://en.wikipedia.org/wiki/Ridge_regression"
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent-soft underline underline-offset-2"
+              >
+                ridge regression
+              </a>{' '}
+              fitted in code to roughly 34,000 historical player-games across eight seasons.
+              It worked out its own weights from that data — nobody hand-tuned which signals
+              matter, and the app shows you which ones it ended up relying on.
+            </p>
+            <p>
+              <span className="font-semibold text-text">What it looks at.</span> A player's
+              recent and longer-run form, their recent usage (targets, carries or pass
+              attempts — volume drives yardage), their career baseline, how erratic they are,
+              how much history exists, what the opposing defense has given up to that
+              position, and the week of the season.
+            </p>
+            <p>
+              <span className="font-semibold text-text">How it avoids fooling itself.</span>{' '}
+              Every feature for a given game is computed only from games played before it, and
+              the model is scored on the most recent season, which it never trained on. Doing
+              this the lazy way — shuffling games at random — would let the future leak into
+              the past and produce accuracy that vanishes in real use.
+            </p>
+            <p>
+              <span className="font-semibold text-text">Where the probability comes from.</span>{' '}
+              Not an assumed bell curve: the model records how wrong it actually was on games
+              it never saw, grouped by the size of the projection (a 5-yard projection misses
+              by a little, a 60-yard one by a lot). The over probability is the share of those
+              real historical errors that would have cleared your line.
+            </p>
+            <p>
+              <span className="font-semibold text-text">How good is it?</span> The panel next
+              to each projection reports the model's typical miss, how much of the
+              game-to-game variation it explains, and its calibration — whether a stated 40%
+              actually happened about 40% of the time. Be realistic about the ceiling: NFL
+              production is mostly noise, and the model explains well under half the
+              variation. It is a way of pricing uncertainty, not a forecast.
+            </p>
+          </div>
+        </Card>
+
+        <Card>
+          <SectionHeading title="Hit Rates & Career Data" />
+          <p className="text-sm leading-relaxed text-text-muted">
+            Alongside every projection, GridEdge counts how many times the player has actually
+            reached your line — over their last 3, 5 and 10 games, this season, and their
+            whole career (eight seasons of game logs). This involves no modelling at all; it
+            is a tally of games that happened. Where the career rate and the season rate
+            diverge sharply, that usually reflects a change in role rather than luck, and the
+            app flags it. The performance chart has a matching{' '}
+            <span className="font-semibold text-text">Career</span> view.
+          </p>
+        </Card>
+
+        <Card>
+          <SectionHeading title="Sportsbook Odds" />
+          <div className="space-y-3 text-sm leading-relaxed text-text-muted">
+            <p>
+              When an odds API key is configured, live lines from DraftKings, FanDuel, BetMGM
+              and Caesars appear next to the model's number, via{' '}
+              <a
+                href="https://the-odds-api.com"
+                target="_blank"
+                rel="noreferrer"
+                className="text-accent-soft underline underline-offset-2"
+              >
+                The Odds API
+              </a>
+              .
+            </p>
+            <p>
+              A book's price converts to an{' '}
+              <span className="font-semibold text-text">implied probability</span> that
+              includes their margin — which is why the over and under add up to more than
+              100%. A raw comparison against that number therefore overstates any
+              disagreement, so the app shows the margin explicitly and refuses to compare
+              against a book pricing a different line than the one you entered.
+            </p>
+            <p>
+              A gap between the model and a book is a disagreement, not an edge. Books price
+              in injuries, weather, game script and late news that this model never sees, and
+              they are right far more often than a public model is. Informational only.
+            </p>
+          </div>
+        </Card>
+
+        <Card>
+          <SectionHeading title="Specified Models" subtitle="The non-trained alternatives" />
           <div className="space-y-3 text-sm leading-relaxed text-text-muted">
             <p>
               <span className="font-semibold text-text">1. Recency-weighted form.</span> The model

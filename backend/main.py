@@ -22,20 +22,23 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core.data_loader import (
     bettable_columns, get_pos, find_player, load_player_data, load_team_data,
-    load_team_meta, load_current_rosters, current_team_and_position,
+    load_team_meta, load_current_rosters, current_team_and_position, load_career_data,
     upcoming_schedule, clear_cache,
 )
 from core.stats_utils import determine_stability, stability_rating
-from core.stat_visualization import comparison_series
+from core.stat_visualization import career_series, comparison_series
 from core.defense_analysis import defense_summary as core_defense_summary
 from core.monte_carlo_sim import SIM_WINDOW
 from core.projection import project as core_project
 from core.projection_models import MODELS
+from core.ml_model import get_model as get_trained_model
+from core import odds as odds_api
+from backend.model_docs import MODEL_DOCS
 
 from backend.schemas import (
     TeamOut, PlayerListItem, PlayerSummary, StabilityStat, GameLogResponse,
     ChartResponse, DefenseSummaryOut, ProjectionRequest, ProjectionResponse,
-    ScheduleGame, ModelInfo,
+    ScheduleGame, ModelInfo, FeatureImportance, OddsResponse,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -77,6 +80,7 @@ def warm_cache():
             load_player_data()
             load_current_rosters()
             load_team_meta()
+            load_career_data()
             logger.info("Warm-up complete: nflverse datasets cached")
         except Exception:
             # A failed warm-up is not fatal - the first request will just load
@@ -136,9 +140,57 @@ def list_positions():
 
 
 @app.get("/api/models", response_model=list[ModelInfo])
-def list_models():
-    """The projection models a client can ask for, for a model picker."""
-    return [ModelInfo(key=k, description=v) for k, v in MODELS.items()]
+def list_models(stat: str | None = Query(default=None, description="Report trained metrics for this stat")):
+    """The projection models a client can ask for, with plain-language docs.
+
+    When `stat` is given, the trained model's real validation numbers and
+    learned feature importances for that stat come back too, so the UI can say
+    what the model actually pays attention to rather than describing it in the
+    abstract.
+    """
+    out = []
+    for key, description in MODELS.items():
+        doc = MODEL_DOCS.get(key, {})
+        info = ModelInfo(
+            key=key,
+            description=description,
+            summary=doc.get('summary'),
+            attends_to=list(doc.get('attends_to', [])),
+            learn_more_url=doc.get('url'),
+            learn_more_label=doc.get('url_label'),
+            trained=bool(doc.get('trained')),
+        )
+        if key == 'ml' and stat:
+            try:
+                trained = get_trained_model(stat)
+            except Exception:
+                logger.exception("Could not load the trained model for %s", stat)
+                trained = None
+            if trained is not None:
+                info.metrics = trained.metrics
+                info.importance = [
+                    FeatureImportance(feature=f['feature'], label=f['label'], share=f['share'])
+                    for f in trained.importance[:6]
+                ]
+                info.attends_to = [f['label'] for f in trained.importance[:4]]
+        out.append(info)
+    return out
+
+
+@app.get("/api/odds", response_model=OddsResponse)
+def live_odds(
+    player: str = Query(..., min_length=1, max_length=100),
+    team: str = Query(..., min_length=2, max_length=4),
+    opponent: str = Query(..., min_length=2, max_length=4),
+    stat: str = Query(..., min_length=1, max_length=50),
+):
+    """Live sportsbook lines for one player/stat, for side-by-side comparison.
+
+    Never raises on a provider problem - the response carries a status the UI
+    renders as an explanation, so a missing API key or an exhausted quota
+    degrades to a message instead of a broken panel.
+    """
+    return odds_api.player_prop(player, team.upper(), opponent.upper(), stat)
 
 
 @app.get("/api/players", response_model=list[PlayerListItem])
@@ -254,11 +306,13 @@ def player_chart(
     name: str,
     stat: str = Query(...),
     opponent: str = Query(..., min_length=2, max_length=4),
-    range: str = Query(default="season", pattern="^(3|5|10|season)$"),
+    range: str = Query(default="season", pattern="^(3|5|10|season|career)$"),
 ):
     _load_player_df(name)  # 404s cleanly if the player doesn't exist
-    last_n = None if range == "season" else int(range)
     try:
+        if range == "career":
+            return career_series(name, stat, opponent.upper())
+        last_n = None if range == "season" else int(range)
         result = comparison_series(name, stat, opponent.upper(), last_n=last_n)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
