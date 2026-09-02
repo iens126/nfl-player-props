@@ -4,7 +4,7 @@ A statistical analytics tool for NFL player props: recent-form breakdowns, oppon
 defense matchups, and a matchup-adjusted Monte Carlo projection with over/under
 probabilities for any prop line.
 
-**Live app:** _not yet deployed — see [Deployment](#deployment) below._
+**Live app:** [nfl-player-props.vercel.app](https://nfl-player-props.vercel.app)
 
 > GridEdge is an independent project, not affiliated with the NFL, NFLPA, or any
 > team. Projections are statistical estimates for informational purposes only —
