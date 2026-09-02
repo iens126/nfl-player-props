@@ -53,8 +53,8 @@ export function OverUnderPanel({ result }: { result: ProjectionResponse }) {
       </div>
 
       <p className="mt-4 text-xs leading-relaxed text-text-faint">
-        Based on {result.simulations.toLocaleString()} simulated outcomes from the player's last{' '}
-        {result.window_games} games, adjusted {result.weight >= 0 ? '+' : ''}
+        {result.model_label} fitted to the player's last {result.window_games} games — weighted
+        toward the most recent — then shifted {result.weight >= 0 ? '+' : ''}
         {result.weight.toFixed(1)} for the {result.opponent} matchup. This is a statistical estimate,
         not a guarantee.
       </p>

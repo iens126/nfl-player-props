@@ -2,7 +2,6 @@ import {
   Bar,
   CartesianGrid,
   ComposedChart,
-  Legend,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -11,6 +10,7 @@ import {
 } from 'recharts'
 import clsx from 'clsx'
 import type { ChartResponse } from '../../api/types'
+import type { MatchupColors } from '../../lib/teamColors'
 import { statLabel } from '../../lib/statLabels'
 
 export type ChartRange = '3' | '5' | '10' | 'season'
@@ -28,12 +28,16 @@ export function PerformanceChart({
   onRangeChange,
   line,
   opponentAbbr,
+  playerAbbr,
+  colors,
 }: {
   chart: ChartResponse
   range: ChartRange
   onRangeChange: (r: ChartRange) => void
   line: number | null
   opponentAbbr: string
+  playerAbbr: string
+  colors: MatchupColors
 }) {
   const data = chart.weeks.map((w) => ({
     week: `W${w.week}`,
@@ -45,10 +49,16 @@ export function PerformanceChart({
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-xs text-text-faint">
-          <span className="inline-flex h-2.5 w-2.5 rounded-sm bg-accent" /> {statLabel(chart.stat)}
-          <span className="mx-1">·</span>
-          <span className="inline-flex h-2.5 w-2.5 rounded-sm bg-cyan/60" /> {opponentAbbr} allowed
+        <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
+          <span className="inline-flex h-2.5 w-2.5 rounded-sm" style={{ background: colors.player }} />
+          <span>
+            <span className="font-semibold text-text">{playerAbbr}</span> {statLabel(chart.stat)}
+          </span>
+          <span className="mx-1 text-text-faint">·</span>
+          <span className="inline-flex h-2.5 w-2.5 rounded-sm" style={{ background: colors.defense }} />
+          <span>
+            <span className="font-semibold text-text">{opponentAbbr}</span> allowed
+          </span>
         </div>
         <div className="flex gap-1 rounded-lg bg-surface-2 p-1">
           {RANGE_OPTIONS.map((opt) => (
@@ -68,19 +78,23 @@ export function PerformanceChart({
 
       <div className="h-72 w-full sm:h-80">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={data} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+          <ComposedChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
             <XAxis dataKey="week" tick={{ fill: 'var(--color-text-faint)', fontSize: 12 }} axisLine={{ stroke: 'var(--color-border)' }} tickLine={false} />
-            <YAxis tick={{ fill: 'var(--color-text-faint)', fontSize: 12 }} axisLine={false} tickLine={false} width={40} />
-            <Tooltip content={(props) => <ChartTooltip {...props} stat={chart.stat} />} cursor={{ fill: 'rgba(255,255,255,0.04)' }} />
-            <Bar dataKey="player" name={statLabel(chart.stat)} fill="var(--color-accent)" radius={[4, 4, 0, 0]} maxBarSize={28} />
-            <Bar dataKey="defense" name={`${opponentAbbr} allowed`} fill="var(--color-cyan)" fillOpacity={0.35} radius={[4, 4, 0, 0]} maxBarSize={28} />
+            {/* Wide enough for three-digit yardage totals - a narrower axis clips them. */}
+            <YAxis tick={{ fill: 'var(--color-text-faint)', fontSize: 12 }} axisLine={false} tickLine={false} width={46} />
+            <Tooltip
+              content={(props) => <ChartTooltip {...props} stat={chart.stat} colors={colors} />}
+              cursor={{ fill: 'color-mix(in srgb, var(--color-text) 6%, transparent)' }}
+            />
+            <Bar dataKey="player" name={`${playerAbbr} ${statLabel(chart.stat)}`} fill={colors.player} radius={[4, 4, 0, 0]} maxBarSize={28} />
+            <Bar dataKey="defense" name={`${opponentAbbr} allowed`} fill={colors.defense} fillOpacity={0.55} radius={[4, 4, 0, 0]} maxBarSize={28} />
             {chart.player_average !== null && (
               <ReferenceLine
                 y={chart.player_average}
                 stroke="var(--color-text-faint)"
                 strokeDasharray="4 4"
-                label={{ value: 'Avg', position: 'insideTopLeft', fill: 'var(--color-text-faint)', fontSize: 11 }}
+                label={{ value: 'Avg', position: 'insideTopLeft', offset: 10, fill: 'var(--color-text-faint)', fontSize: 11 }}
               />
             )}
             {line !== null && !Number.isNaN(line) && (
@@ -92,10 +106,6 @@ export function PerformanceChart({
                 label={{ value: `Line ${line}`, position: 'insideTopRight', fill: 'var(--color-warn)', fontSize: 11, fontWeight: 700 }}
               />
             )}
-            <Legend
-              wrapperStyle={{ fontSize: 12, color: 'var(--color-text-faint)' }}
-              formatter={(value) => <span style={{ color: 'var(--color-text-muted)' }}>{value}</span>}
-            />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -108,22 +118,25 @@ interface ChartTooltipProps {
   label?: string | number
   payload?: readonly { payload?: { week: string; opponent: string | null; player: number | null; defense: number | null } }[]
   stat: string
+  colors: MatchupColors
 }
 
-function ChartTooltip({ active, payload, label, stat }: ChartTooltipProps) {
+function ChartTooltip({ active, payload, label, stat, colors }: ChartTooltipProps) {
   const row = payload?.[0]?.payload
   if (!active || !row) return null
 
   return (
-    <div className="rounded-lg border border-border bg-surface-2 px-3 py-2 text-xs shadow-xl">
+    <div className="rounded-lg border border-border bg-surface px-3 py-2 text-xs shadow-xl">
       <p className="font-semibold text-text">
         {label} {row.opponent ? `vs ${row.opponent}` : ''}
       </p>
-      <p className="mt-1 text-text-muted">
-        {statLabel(stat)}: <span className="tabular font-semibold text-accent-soft">{row.player ?? '—'}</span>
+      <p className="mt-1 flex items-center gap-1.5 text-text-muted">
+        <span className="inline-flex h-2 w-2 rounded-sm" style={{ background: colors.player }} />
+        {statLabel(stat)}: <span className="tabular font-semibold text-text">{row.player ?? '—'}</span>
       </p>
-      <p className="text-text-muted">
-        Defense allowed: <span className="tabular font-semibold text-cyan">{row.defense ?? '—'}</span>
+      <p className="flex items-center gap-1.5 text-text-muted">
+        <span className="inline-flex h-2 w-2 rounded-sm" style={{ background: colors.defense }} />
+        Defense allowed: <span className="tabular font-semibold text-text">{row.defense ?? '—'}</span>
       </p>
     </div>
   )

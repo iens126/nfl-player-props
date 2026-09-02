@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Bars3Icon, XMarkIcon, ChartBarSquareIcon } from '@heroicons/react/24/outline'
+import { Bars3Icon, XMarkIcon, ChartBarSquareIcon, SunIcon, MoonIcon } from '@heroicons/react/24/outline'
 import clsx from 'clsx'
+import { useTheme } from '../../lib/theme'
 
 const LINKS = [
   { to: '/', label: 'Dashboard' },
@@ -10,6 +11,7 @@ const LINKS = [
 
 export function NavBar() {
   const [open, setOpen] = useState(false)
+  const { theme, toggle } = useTheme()
 
   return (
     <header className="sticky top-0 z-40 border-b border-border/80 bg-canvas/85 backdrop-blur-md">
@@ -23,7 +25,7 @@ export function NavBar() {
           </span>
         </NavLink>
 
-        <nav className="hidden items-center gap-1 sm:flex">
+        <nav className="ml-auto hidden items-center gap-1 sm:flex">
           {LINKS.map((link) => (
             <NavLink
               key={link.to}
@@ -41,13 +43,24 @@ export function NavBar() {
           ))}
         </nav>
 
-        <button
-          className="rounded-lg p-2 text-text-muted sm:hidden"
-          onClick={() => setOpen((v) => !v)}
-          aria-label="Toggle navigation"
-        >
-          {open ? <XMarkIcon className="h-6 w-6" /> : <Bars3Icon className="h-6 w-6" />}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={toggle}
+            className="rounded-lg p-2 text-text-muted transition-colors hover:bg-surface-2 hover:text-text"
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+          >
+            {theme === 'dark' ? <SunIcon className="h-5 w-5" /> : <MoonIcon className="h-5 w-5" />}
+          </button>
+
+          <button
+            className="rounded-lg p-2 text-text-muted sm:hidden"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Toggle navigation"
+          >
+            {open ? <XMarkIcon className="h-6 w-6" /> : <Bars3Icon className="h-6 w-6" />}
+          </button>
+        </div>
       </div>
 
       {open && (

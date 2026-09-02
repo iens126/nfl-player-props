@@ -4,7 +4,20 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="light dark" />
+    <script>
+      // Resolve the theme before first paint so the page never flashes the
+      // wrong one. Mirrors the logic in src/lib/theme.ts.
+      (function () {
+        try {
+          var saved = localStorage.getItem('gridedge-theme')
+          var theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          document.documentElement.setAttribute('data-theme', theme)
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light')
+        }
+      })()
+    </script>
     <meta name="description" content="GridEdge — statistical NFL player prop projections: recent form, matchup analysis, and simulated over/under probabilities." />
     <title>GridEdge — NFL Player Props Analytics</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />

@@ -21,11 +21,10 @@ Methodology (used verbatim by the API / frontend "how is this calculated" copy):
 import numpy as np
 import pandas as pd
 from rapidfuzz import process, fuzz
-from functools import lru_cache
 
 from core.data_loader import (
     load_team_data, load_player_data, load_depth_data,
-    find_player, pass_def, run_def,
+    find_player, pass_def, run_def, cached,
 )
 
 STAT_MAP = {
@@ -66,51 +65,87 @@ def best_name_match(name, name_list, threshold=85):
     return None
 
 
-# Cached because by_positon_rank() calls this once per unique player in a position
-# group (100+ players league-wide) and the result is deterministic for the life of
-# the loaded data (cleared automatically whenever data_loader's cache is cleared).
-@lru_cache(maxsize=None)
+_SUFFIXES = {'jr', 'sr', 'ii', 'iii', 'iv', 'v'}
+
+
+def _normalize_name(name):
+    """Casefold and strip punctuation/suffixes so 'A.J. Brown' == 'AJ Brown'."""
+    cleaned = ''.join(c for c in str(name).lower() if c.isalnum() or c.isspace())
+    parts = [p for p in cleaned.split() if p not in _SUFFIXES]
+    return ' '.join(parts)
+
+
+def pos_rank_map():
+    """Every player's depth-chart rank, resolved in one pass.
+
+    This used to be a per-player lookup: for each of the ~140 players in a
+    position group it re-scanned the full stats and depth-chart frames and ran
+    a fuzzy match, which cost over a second on the first projection. Names
+    agree exactly far more often than not, so match the whole league at once on
+    a normalized key and fall back to fuzzy matching only for the leftovers.
+
+    Cached with the data it is derived from, so a refresh rebuilds it rather
+    than leaving ranks that describe an older depth chart.
+    """
+    def _build():
+        depth = load_depth_data()
+        player_stats = load_player_data()
+
+        depth = depth[['player_name', 'pos_abb', 'pos_rank']].dropna(subset=['player_name', 'pos_abb'])
+        depth = depth.drop_duplicates(subset=['player_name', 'pos_abb'], keep='first')
+        depth = depth.assign(norm_key=depth['player_name'].map(_normalize_name))
+
+        # (position, normalized name) -> rank, plus the candidate pool per
+        # position for the fuzzy fallback.
+        exact = {(row.pos_abb, row.norm_key): row.pos_rank for row in depth.itertuples()}
+        by_position = depth.groupby('pos_abb')['norm_key'].unique().to_dict()
+
+        players = player_stats[['player_display_name', 'position']].dropna().drop_duplicates(
+            subset=['player_display_name'], keep='last')
+
+        ranks = {}
+        for name, pos in players.itertuples(index=False):
+            key = _normalize_name(name)
+            rank = exact.get((pos, key))
+            if rank is None:
+                match = best_name_match(key, by_position.get(pos, []))
+                rank = exact.get((pos, match)) if match is not None else None
+            ranks[name] = np.nan if rank is None else rank
+        return ranks
+
+    return cached("pos_rank_map", _build)
+
+
 def get_pos_rank(name):
-    """A player's depth-chart rank at their position (1 = starter), via fuzzy name match."""
-    depth = load_depth_data()
-    player_stats = load_player_data()
-    positions = player_stats[player_stats['player_display_name'] == name]['position'].unique()
-    if len(positions) == 0:
-        return np.nan
-    pos = positions[0]
-    depth_names = depth[depth['pos_abb'] == pos]['player_name'].unique()
-    match = best_name_match(name, depth_names)
-
-    if match is None:
-        return np.nan
-
-    rank = depth[(depth['player_name'] == match) & (depth['pos_abb'] == pos)]['pos_rank'].iloc[0]
-    return rank
+    """A player's depth-chart rank at their position (1 = starter)."""
+    return pos_rank_map().get(name, np.nan)
 
 
 def by_positon_rank(defense, pos, stat_cat):
     """Average/std of `stat_cat` grouped by depth-chart rank (1/2/3/other) for a
     position, either league-wide (defense='NFL') or against one specific defense."""
-    player_stats = load_player_data()
-    if defense == 'NFL':
-        positional_stats = player_stats[player_stats['position'] == pos].copy()
-    else:
-        positional_stats = player_stats[(player_stats['opponent_team'] == defense) & (player_stats['position'] == pos)].copy()
+    def _build():
+        player_stats = load_player_data()
+        if defense == 'NFL':
+            positional_stats = player_stats[player_stats['position'] == pos].copy()
+        else:
+            positional_stats = player_stats[(player_stats['opponent_team'] == defense) & (player_stats['position'] == pos)].copy()
 
-    positional_stats['rank'] = positional_stats['player_display_name'].map(
-        {p: get_pos_rank(p) for p in positional_stats['player_display_name'].unique()})
+        positional_stats['rank'] = positional_stats['player_display_name'].map(pos_rank_map())
 
-    positional_stats['rank_group'] = positional_stats['rank'].apply(
-        lambda r: r if r in [1, 2, 3] else 'other'
-    )
+        positional_stats['rank_group'] = positional_stats['rank'].apply(
+            lambda r: r if r in [1, 2, 3] else 'other'
+        )
 
-    stats = (positional_stats.groupby('rank_group')[stat_cat].agg(['mean', 'std', 'count']).reset_index())
+        stats = (positional_stats.groupby('rank_group')[stat_cat].agg(['mean', 'std', 'count']).reset_index())
 
-    for group in [1, 2, 3, 'other']:
-        if group not in stats['rank_group'].values:
-            stats.loc[len(stats)] = [group, np.nan, np.nan, 0]
+        for group in [1, 2, 3, 'other']:
+            if group not in stats['rank_group'].values:
+                stats.loc[len(stats)] = [group, np.nan, np.nan, 0]
 
-    return stats
+        return stats
+
+    return cached(f"pos_rank_stats:{defense}:{pos}:{stat_cat}", _build)
 
 
 def create_weight(name, def_team, stat_cat):

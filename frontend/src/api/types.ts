@@ -2,6 +2,7 @@ export interface Team {
   abbr: string
   name: string
   color: string | null
+  color2: string | null
 }
 
 export interface PlayerListItem {
@@ -78,23 +79,40 @@ export interface DefenseSummary {
   rushing: DefenseSection
 }
 
+export type ModelKey = 'ensemble' | 'lognormal' | 'negbin' | 'empirical' | 'triangular'
+
+export interface ModelInfo {
+  key: ModelKey
+  description: string
+}
+
 export interface ProjectionRequest {
   player: string
   opponent: string
   stat: string
   line: number
+  model?: ModelKey
 }
 
-export interface ProjectionResponse extends ProjectionRequest {
+export interface ProjectionResponse {
+  player: string
+  opponent: string
+  stat: string
+  line: number
   projection: number
   prob_over: number
   prob_under: number
   weight: number
-  recent_average: number
+  model: string
+  model_label: string
+  form_average: number
+  season_average: number
   recent_games: number
-  simulated_std: number
-  simulations: number
+  effective_games: number
+  std_dev: number
   window_games: number
+  /** Every model's over probability for this line, keyed by model name. */
+  alternatives: Record<string, number>
 }
 
 export interface ScheduleGame {

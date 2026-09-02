@@ -10,6 +10,7 @@ class TeamOut(BaseModel):
     abbr: str
     name: str
     color: Optional[str] = None
+    color2: Optional[str] = None
 
 
 class PlayerListItem(BaseModel):
@@ -85,6 +86,7 @@ class ProjectionRequest(BaseModel):
     opponent: str = Field(min_length=2, max_length=4)
     stat: str = Field(min_length=1, max_length=50)
     line: float = Field(gt=0, le=2000)
+    model: str = Field(default='ensemble', max_length=32)
 
     @field_validator('opponent')
     @classmethod
@@ -101,11 +103,23 @@ class ProjectionResponse(BaseModel):
     prob_over: float
     prob_under: float
     weight: float
-    recent_average: float
+    model: str
+    model_label: str
+    form_average: float
+    season_average: float
     recent_games: int
-    simulated_std: float
-    simulations: int
+    effective_games: float
+    std_dev: float
     window_games: int
+    # Every model's over probability for this same line, so the UI can show
+    # whether the models agree (a tight cluster) or the answer depends heavily
+    # on the assumed distribution shape (a wide spread).
+    alternatives: dict[str, float]
+
+
+class ModelInfo(BaseModel):
+    key: str
+    description: str
 
 
 class ScheduleGame(BaseModel):

@@ -15,14 +15,26 @@ import { GameLogTable } from '../components/player/GameLogTable'
 import { StabilityPanel } from '../components/player/StabilityPanel'
 import { DefenseMatchup } from '../components/player/DefenseMatchup'
 import { Collapsible } from '../components/common/Collapsible'
+import { HowItWorks } from '../components/layout/HowItWorks'
+import { ModelConsensus } from '../components/player/ModelConsensus'
 import { statLabel } from '../lib/statLabels'
-import type { ProjectionResponse } from '../api/types'
+import { matchupColors } from '../lib/teamColors'
+import { useTheme } from '../lib/theme'
+import type { ModelKey, ProjectionResponse } from '../api/types'
 
 const PASS_TYPE_STATS = new Set([
   'passing_yards', 'passing_tds', 'completions', 'attempts', 'passing_interceptions',
   'receiving_yards', 'receiving_tds', 'targets', 'receptions',
 ])
 const RUSH_TYPE_STATS = new Set(['carries', 'rushing_yards', 'rushing_tds'])
+
+// The prop most people are looking for first, per position, in preference order.
+const PREFERRED_STAT: Record<string, string[]> = {
+  QB: ['passing_yards', 'passing_tds', 'completions'],
+  RB: ['rushing_yards', 'carries', 'receiving_yards'],
+  WR: ['receiving_yards', 'receptions', 'targets'],
+  TE: ['receiving_yards', 'receptions', 'targets'],
+}
 
 export default function Dashboard() {
   const [position, setPosition] = useState<string | null>(null)
@@ -32,10 +44,13 @@ export default function Dashboard() {
   const [stat, setStat] = useState<string | null>(null)
   const [lineInput, setLineInput] = useState('')
   const [range, setRange] = useState<ChartRange>('season')
+  const [model, setModel] = useState<ModelKey>('ensemble')
+  const { theme } = useTheme()
 
   const teams = useAsync(() => api.teams(), [])
   const positions = useAsync(() => api.positions(), [])
   const schedule = useAsync(() => api.scheduleUpcoming(21), [])
+  const models = useAsync(() => api.models(), [])
 
   const players = useAsync(
     () => api.players({ team: team ?? undefined, position: position ?? undefined, limit: 1000 }),
@@ -58,10 +73,14 @@ export default function Dashboard() {
     }
   }, [players.data, player])
 
-  // Default the prop stat to the player's first available stat.
+  // Default to the prop people actually look up for that position (a QB's
+  // passing yards, a back's rushing yards) rather than whichever stat happens
+  // to come first in the list.
   useEffect(() => {
     if (summary.data && (!stat || !summary.data.available_stats.includes(stat))) {
-      setStat(summary.data.available_stats[0] ?? null)
+      const available = summary.data.available_stats
+      const preferred = PREFERRED_STAT[summary.data.position] ?? []
+      setStat(preferred.find((s) => available.includes(s)) ?? available[0] ?? null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary.data])
@@ -104,7 +123,7 @@ export default function Dashboard() {
     setProjection((p) => ({ ...p, loading: true, error: null }))
     const handle = setTimeout(() => {
       api
-        .projection({ player, opponent, stat, line })
+        .projection({ player, opponent, stat, line, model })
         .then((data) => setProjection({ data, loading: false, error: null }))
         .catch((err) => {
           const message = err instanceof ApiError ? err.message : 'Could not calculate a projection.'
@@ -112,7 +131,7 @@ export default function Dashboard() {
         })
     }, 350)
     return () => clearTimeout(handle)
-  }, [player, opponent, stat, line])
+  }, [player, opponent, stat, line, model])
 
   const positionItems: SelectItem[] = (positions.data ?? []).map((p) => ({ value: p, label: p }))
   const teamItems: SelectItem[] = (teams.data ?? []).map((t) => ({ value: t.abbr, label: `${t.abbr} — ${t.name}`, accent: t.color }))
@@ -123,18 +142,22 @@ export default function Dashboard() {
     .filter((t) => t.abbr !== summary.data?.team)
     .map((t) => ({ value: t.abbr, label: `${t.abbr} — ${t.name}`, accent: t.color }))
 
+  const chartColors = matchupColors(summary.data?.team, opponent, teams.data, theme === 'dark')
+
   const showPassing = summary.data?.available_stats.some((s) => PASS_TYPE_STATS.has(s)) ?? false
   const showRushing = summary.data?.available_stats.some((s) => RUSH_TYPE_STATS.has(s)) ?? false
 
   return (
     <div className="mx-auto max-w-7xl px-4 pb-24 pt-8 sm:px-6 lg:px-8">
-      <div className="mb-8">
+      <div className="mb-6">
         <h1 className="text-2xl font-extrabold tracking-tight text-text sm:text-3xl">Player Prop Analysis</h1>
         <p className="mt-1.5 max-w-2xl text-sm text-text-muted">
-          Pick a player and matchup to see recent form, opponent defense, and a simulated
+          Pick a player and matchup to see recent form, opponent defense, and a modelled
           over/under projection for any prop line.
         </p>
       </div>
+
+      <HowItWorks />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="order-2 space-y-6 lg:order-1">
@@ -227,6 +250,9 @@ export default function Dashboard() {
                   onStatChange={setStat}
                   line={lineInput}
                   onLineChange={setLineInput}
+                  models={models.data ?? []}
+                  model={model}
+                  onModelChange={setModel}
                 />
 
                 <div className="mt-5">
@@ -235,18 +261,32 @@ export default function Dashboard() {
                   {opponent && line !== null && projection.loading && <ProjectionSkeleton />}
                   {opponent && line !== null && projection.error && <ErrorState message={projection.error} />}
                   {opponent && line !== null && !projection.loading && projection.data && (
-                    <OverUnderPanel result={projection.data} />
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+                      <OverUnderPanel result={projection.data} />
+                      <ModelConsensus result={projection.data} />
+                    </div>
                   )}
                 </div>
               </Card>
 
               {stat && opponent && (
                 <Card>
-                  <SectionHeading title="Performance Chart" subtitle={`${statLabel(stat)} by week vs. ${opponent} allowed`} />
+                  <SectionHeading
+                    title="Performance Chart"
+                    subtitle={`${summary.data.team} ${statLabel(stat)} by week, against what ${opponent} allows`}
+                  />
                   {chart.loading && <Skeleton className="h-72 w-full" />}
                   {chart.error && <ErrorState message={chart.error} />}
                   {chart.data && (
-                    <PerformanceChart chart={chart.data} range={range} onRangeChange={setRange} line={line} opponentAbbr={opponent} />
+                    <PerformanceChart
+                      chart={chart.data}
+                      range={range}
+                      onRangeChange={setRange}
+                      line={line}
+                      opponentAbbr={opponent}
+                      playerAbbr={summary.data.team}
+                      colors={chartColors}
+                    />
                   )}
                 </Card>
               )}
@@ -379,27 +419,41 @@ function ProjectionExplainer({ result }: { result: ProjectionResponse }) {
   return (
     <div className="space-y-3">
       <p>
-        The model takes {result.player}'s last {result.window_games} games of {statLabel(result.stat)} and fits a
-        triangular distribution using the minimum, mean, and maximum from that window — capturing both recent form
-        and recent variability. It then draws {result.simulations.toLocaleString()} simulated outcomes from that
-        distribution.
+        The model starts from {result.player}'s last {result.window_games} games of{' '}
+        {statLabel(result.stat)}, weighted so recent games count for more — weights halve every
+        three games back. That comes to an effective sample of about{' '}
+        <span className="tabular font-semibold text-text">{result.effective_games.toFixed(1)}</span>{' '}
+        games, with a form average of{' '}
+        <span className="tabular font-semibold text-text">{result.form_average.toFixed(1)}</span>.
       </p>
       <p>
-        Each simulated outcome is shifted by a <span className="font-semibold text-text">matchup weight</span> of{' '}
+        It then fits a distribution whose shape matches how the stat actually behaves —{' '}
+        <span className="font-semibold text-text">{result.model_label}</span>. Yardage is modelled
+        as continuous, right-skewed, and able to land on zero; counting stats like receptions and
+        touchdowns are modelled as discrete events. With few games to go on, the spread is pulled
+        toward a league-typical value, so a short history produces a wider, less confident
+        projection rather than false precision.
+      </p>
+      <p>
+        Each outcome is shifted by a <span className="font-semibold text-text">matchup weight</span>{' '}
+        of{' '}
         <span className="tabular font-semibold text-text">
           {result.weight >= 0 ? '+' : ''}
           {result.weight.toFixed(2)}
         </span>{' '}
-        against {result.opponent}. For quarterbacks this weight is based on the opponent's pass defense z-score
-        relative to the league, scaled by the player's own volatility. For skill-position players it compares what{' '}
-        {result.opponent} allows to players at the same depth-chart rank (e.g. a team's WR1) against the league
-        average at that rank — a proxy for the specific matchup rather than a defense's blended average.
+        against {result.opponent}. For quarterbacks this is based on the opponent's pass defense
+        z-score relative to the league, scaled by the player's own volatility. For skill-position
+        players it compares what {result.opponent} allows to players at the same depth-chart rank
+        (e.g. a team's WR1) against the league average at that rank — a closer proxy for the
+        specific matchup than a defense's blended average across every receiver it has faced.
       </p>
       <p>
-        The <span className="font-semibold text-text">projection</span> is the mean of the adjusted simulated
-        outcomes. The <span className="font-semibold text-over">over</span>/<span className="font-semibold text-under">under</span>{' '}
-        probabilities are the share of those {result.simulations.toLocaleString()} simulations that land at or
-        above / below your entered line. These are statistical estimates from historical data, not guarantees.
+        The <span className="font-semibold text-text">projection</span> is the adjusted mean of
+        that distribution, and the <span className="font-semibold text-over">over</span>/
+        <span className="font-semibold text-under">under</span> probabilities are its exact mass
+        above and below your line — computed in closed form rather than sampled, so the same
+        inputs always return the same answer. These are statistical estimates from historical
+        data, not guarantees.
       </p>
     </div>
   )

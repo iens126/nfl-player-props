@@ -9,6 +9,7 @@ clean 4xx responses instead of a stack trace.
 import logging
 import os
 import sys
+import threading
 from pathlib import Path
 
 # Make sure the repo root (parent of backend/) is importable as `core` regardless
@@ -27,12 +28,14 @@ from core.data_loader import (
 from core.stats_utils import determine_stability, stability_rating
 from core.stat_visualization import comparison_series
 from core.defense_analysis import defense_summary as core_defense_summary
-from core.monte_carlo_sim import project as core_project, SIM_WINDOW
+from core.monte_carlo_sim import SIM_WINDOW
+from core.projection import project as core_project
+from core.projection_models import MODELS
 
 from backend.schemas import (
     TeamOut, PlayerListItem, PlayerSummary, StabilityStat, GameLogResponse,
     ChartResponse, DefenseSummaryOut, ProjectionRequest, ProjectionResponse,
-    ScheduleGame,
+    ScheduleGame, ModelInfo,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -56,6 +59,31 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def warm_cache():
+    """Pull the nflverse datasets in the background as soon as the app boots.
+
+    Render's free tier spins the service down when idle, so the first request
+    after a wake-up would otherwise pay for both the container start *and* the
+    dataset download. Warming in a daemon thread keeps startup (and the health
+    check that gates traffic) instant, while making it likely the data is
+    already resident by the time a user's first request lands.
+    """
+    def _warm():
+        try:
+            load_team_data()
+            load_player_data()
+            load_current_rosters()
+            load_team_meta()
+            logger.info("Warm-up complete: nflverse datasets cached")
+        except Exception:
+            # A failed warm-up is not fatal - the first request will just load
+            # the data itself, exactly as it did before.
+            logger.exception("Cache warm-up failed; falling back to lazy loading")
+
+    threading.Thread(target=_warm, name="cache-warmup", daemon=True).start()
 
 
 @app.exception_handler(Exception)
@@ -92,7 +120,12 @@ def list_teams():
     meta = load_team_meta()
     teams = sorted(team_stats['team'].dropna().unique().tolist())
     return [
-        TeamOut(abbr=t, name=meta.get(t, {}).get('full', t), color=meta.get(t, {}).get('color'))
+        TeamOut(
+            abbr=t,
+            name=meta.get(t, {}).get('full', t),
+            color=meta.get(t, {}).get('color'),
+            color2=meta.get(t, {}).get('color2'),
+        )
         for t in teams
     ]
 
@@ -100,6 +133,12 @@ def list_teams():
 @app.get("/api/positions", response_model=list[str])
 def list_positions():
     return POSITION_GROUPS
+
+
+@app.get("/api/models", response_model=list[ModelInfo])
+def list_models():
+    """The projection models a client can ask for, for a model picker."""
+    return [ModelInfo(key=k, description=v) for k, v in MODELS.items()]
 
 
 @app.get("/api/players", response_model=list[PlayerListItem])
@@ -261,8 +300,11 @@ def projection(req: ProjectionRequest):
     if req.stat not in player_df.columns:
         raise HTTPException(status_code=400, detail=f"'{req.stat}' has no recorded data for {req.player}")
 
+    if req.model not in MODELS:
+        raise HTTPException(status_code=400, detail=f"Unknown model '{req.model}'")
+
     try:
-        result = core_project(req.player, req.opponent, req.stat, req.line)
+        result = core_project(req.player, req.opponent, req.stat, req.line, model=req.model)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

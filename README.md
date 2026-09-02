@@ -25,7 +25,7 @@ Pick a player and an opponent, and GridEdge shows:
 
 - **Frontend:** React + TypeScript + Vite + Tailwind CSS v4, Headless UI (accessible dropdowns), Recharts
 - **Backend:** FastAPI (Python), serving a clean JSON API over the analytics engine
-- **Analytics engine:** `core/` — pandas-based data pipeline, unchanged in substance from the original project, refactored to be callable from a web backend (in-memory caching, no more global module-level execution)
+- **Analytics engine:** `core/` — pandas-based data pipeline with in-memory caching, plus a set of closed-form probability models (`projection_models.py`) that replaced the original triangular Monte Carlo sampler
 - **Data source:** [nflverse](https://github.com/nflverse) via `nflreadpy` (team stats, player stats, depth charts, schedules)
 
 ## Project structure
@@ -105,15 +105,57 @@ Open `http://localhost:5173`.
    after removing outlier games, and buckets that into a stability rating.
 3. `core/defense_analysis.py` aggregates every team's pass/run defense and
    ranks all 32 teams against each other for each stat.
-4. `core/monte_carlo_sim.py` is the projection engine: it fits a triangular
-   distribution to a player's last 3 games, computes a matchup-adjustment
-   weight from the opponent's defensive profile (different logic for QBs vs.
-   skill positions — see the in-app Methodology page for the full writeup),
-   runs 10,000 simulated draws, and returns a projection plus over/under
-   probability for any line.
-5. `backend/main.py` is a thin FastAPI layer that calls into `core/` and
+4. `core/monte_carlo_sim.py` computes the matchup-adjustment weight from the
+   opponent's defensive profile (different logic for QBs vs. skill positions —
+   see the in-app Methodology page for the full writeup) and still holds the
+   original triangular Monte Carlo sampler.
+5. `core/projection_models.py` holds the probability models, and
+   `core/projection.py` orchestrates them: it builds a recency-weighted window
+   of a player's last 10 games, applies the matchup weight, and evaluates the
+   line. Models are **closed-form rather than sampled**, which makes them
+   exact, deterministic (the same inputs always return the same answer), and
+   fast enough that every model is scored on every request — that's what the
+   "model consensus" panel shows. See below for why the triangular sampler was
+   demoted to a comparison option.
+6. `backend/main.py` is a thin FastAPI layer that calls into `core/` and
    converts DataFrames into typed JSON responses — the frontend never sees
    pandas.
+
+### Why the projection model changed
+
+The original engine fit a triangular distribution to the min/mean/max of a
+player's last 3 games and drew 10,000 samples from it. That had four problems:
+
+- **It could report a hard 0%.** A triangular is bounded by the window it was
+  fit to, so a player whose last three games topped out at 70 yards got exactly
+  0% for an 80-yard line — not a credible answer.
+- **Three games is a tiny sample**, and one outlier redefined the whole shape.
+- **Sampling made results wobble** — the same request twice returned different
+  numbers, which reads as a bug.
+- **A triangle doesn't match the data.** Yardage is continuous, non-negative
+  and right-skewed with real zero games; receptions and touchdowns are discrete
+  counts. Neither is triangular.
+
+The current models fit shapes that match the stat (zero-inflated lognormal for
+yardage, negative binomial for counts, a smoothed empirical fit that assumes no
+shape at all), weight recent games more heavily over a longer window, and shrink
+the spread toward a league-typical value when there's little history — so a
+thin sample produces a wider, less confident projection rather than false
+precision. `tests/test_projection_models.py` pins these properties down.
+
+## Tests
+
+The projection maths has a test suite covering the properties that make a
+projection trustworthy — closed-form results agreeing with brute-force
+sampling, probabilities monotone in the line, confidence that scales with
+evidence, and no crashes on degenerate windows (a single game, all zeros).
+
+```bash
+backend/.venv/bin/python tests/test_projection_models.py
+```
+
+It also runs under `pytest` if you have it, but needs no test dependency in the
+deployed image.
 
 ## Deployment
 

@@ -34,6 +34,17 @@ def _cached(key, loader):
     return value
 
 
+def cached(key, loader):
+    """Memoize a value derived from the loaded data under the same TTL.
+
+    Lookups built *from* these DataFrames (e.g. the depth-chart rank map) have
+    to expire when the DataFrames do, or a refresh leaves them describing data
+    that is no longer loaded. Routing them through this cache means
+    clear_cache() drops them along with their source.
+    """
+    return _cached(key, loader)
+
+
 def clear_cache():
     """Force the next data access to re-fetch from nflverse."""
     _cache.clear()
@@ -92,6 +103,9 @@ def load_team_meta():
                 'full': row['team_name'],
                 'nickname': row.get('team_nick'),
                 'color': row.get('team_color'),
+                # Secondary color, used as a fallback when two teams in the
+                # same chart have near-identical primaries.
+                'color2': row.get('team_color2'),
             }
         return meta
     return _cached("team_meta", _load)

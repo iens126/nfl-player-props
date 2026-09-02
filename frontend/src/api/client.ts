@@ -3,6 +3,7 @@ import {
   type ChartResponse,
   type DefenseSummary,
   type GameLogResponse,
+  type ModelInfo,
   type PlayerListItem,
   type PlayerSummary,
   type ProjectionRequest,
@@ -61,6 +62,7 @@ export const api = {
   health: () => request<{ status: string }>('/health'),
   teams: () => request<Team[]>('/api/teams'),
   positions: () => request<string[]>('/api/positions'),
+  models: () => request<ModelInfo[]>('/api/models'),
   players: (params: { team?: string; position?: string; q?: string; limit?: number }) => {
     const qs = new URLSearchParams()
     if (params.team) qs.set('team', params.team)
