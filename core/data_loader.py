@@ -51,6 +51,35 @@ def load_depth_data(year=None):
     return _cached(f"depth_charts:{year}", lambda: nfl.load_depth_charts(year).to_pandas())
 
 
+def load_current_rosters():
+    """Each active player's current team/position, from nflverse's roster data.
+
+    Unlike load_player_data() (weekly stat lines, which only exist once a
+    season's games have actually been played and otherwise still reflect
+    whatever team a player last recorded a stat for), nflreadpy's
+    load_rosters(seasons=None) resolves to "the current roster year" and is
+    updated for trades/cuts/signings independent of games played - so it
+    stays accurate through the offseason, when stats have gone stale.
+    """
+    def _load():
+        df = nfl.load_rosters().to_pandas()
+        df = df[df['status'] == 'ACT']
+        df = df.sort_values('week').drop_duplicates('full_name', keep='last')
+        return df.set_index('full_name')[['team', 'position']]
+    return _cached("current_rosters", _load)
+
+
+def current_team_and_position(name: str, fallback_df: pd.DataFrame) -> tuple[str, str]:
+    """A player's current (team, position), preferring the live roster and
+    falling back to their most recent stat line (e.g. for a player who left
+    the league, or a name that doesn't match cleanly between datasets)."""
+    roster = load_current_rosters()
+    if name in roster.index:
+        row = roster.loc[name]
+        return row['team'], row['position']
+    return fallback_df['team'].iloc[-1], fallback_df['position'].iloc[-1]
+
+
 def load_team_meta():
     """Reference metadata (full team name, primary color) - not season stats.
     Colors are used for lightweight UI accents only; team logos/wordmarks from

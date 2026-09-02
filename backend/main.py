@@ -21,7 +21,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core.data_loader import (
     bettable_columns, get_pos, find_player, load_player_data, load_team_data,
-    load_team_meta, upcoming_schedule, clear_cache,
+    load_team_meta, load_current_rosters, current_team_and_position,
+    upcoming_schedule, clear_cache,
 )
 from core.stats_utils import determine_stability, stability_rating
 from core.stat_visualization import comparison_series
@@ -108,8 +109,13 @@ def list_players(
     q: str | None = Query(default=None, description="Case-insensitive substring search on player name"),
     limit: int = Query(default=50, ge=1, le=1000),
 ):
-    player_stats = load_player_data()
-    df = player_stats[player_stats['position'].isin(POSITION_GROUPS)]
+    # Current team/position comes from the live roster, not the stat lines -
+    # a player's most recent stat row can be a season stale once they've been
+    # traded, cut, or re-signed elsewhere in the offseason. Still require a
+    # stat history so the app never lists a player it can't actually analyze.
+    roster = load_current_rosters().reset_index().rename(columns={'full_name': 'player_display_name'})
+    analyzable_names = set(load_player_data()['player_display_name'].unique())
+    df = roster[roster['player_display_name'].isin(analyzable_names) & roster['position'].isin(POSITION_GROUPS)]
 
     if team:
         df = df[df['team'] == team.upper()]
@@ -118,8 +124,7 @@ def list_players(
     if q:
         df = df[df['player_display_name'].str.contains(q, case=False, na=False)]
 
-    unique = df[['player_display_name', 'team', 'position']].drop_duplicates('player_display_name')
-    unique = unique.sort_values('player_display_name').head(limit)
+    unique = df.sort_values('player_display_name').head(limit)
 
     return [
         PlayerListItem(name=row['player_display_name'], team=row['team'], position=row['position'])
@@ -174,11 +179,12 @@ def player_summary(name: str):
     recent_averages = {c: float(recent[c].mean()) for c in available_stats}
 
     headshots = df['headshot_url'].dropna().unique() if 'headshot_url' in df.columns else []
+    team, pos = current_team_and_position(name, df)
 
     return PlayerSummary(
         name=name,
-        team=df['team'].iloc[-1],
-        position=df['position'].iloc[-1],
+        team=team,
+        position=pos,
         headshot_url=headshots[0] if len(headshots) > 0 else None,
         games_played=len(df),
         available_stats=available_stats,
@@ -240,7 +246,7 @@ def defense_matchup(team: str):
 @app.post("/api/projection", response_model=ProjectionResponse)
 def projection(req: ProjectionRequest):
     player_df = _load_player_df(req.player)
-    player_team = player_df['team'].iloc[-1]
+    player_team, _pos = current_team_and_position(req.player, player_df)
 
     if req.opponent == player_team:
         raise HTTPException(status_code=400, detail="Opponent must be different from the player's own team")

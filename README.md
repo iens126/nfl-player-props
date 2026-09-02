@@ -91,12 +91,16 @@ Open `http://localhost:5173`.
 
 ## The data pipeline
 
-1. `core/data_loader.py` pulls team stats, player stats, depth charts, and the
-   schedule from nflverse via `nflreadpy`, and caches the resulting
+1. `core/data_loader.py` pulls team stats, player stats, depth charts, rosters,
+   and the schedule from nflverse via `nflreadpy`, and caches the resulting
    DataFrames in memory for 6 hours so repeated requests don't re-fetch/re-parse.
    Season selection is dynamic (nflreadpy resolves the current season from
    today's date), so the app tracks the season rollover automatically instead
-   of a hardcoded year.
+   of a hardcoded year. A player's current team/position always comes from
+   the live roster (`load_rosters`), not their stat lines - stat lines only
+   update once games are played, so during an offseason they'd otherwise
+   still show a player's team from months-old games, missing any trades or
+   cuts since.
 2. `core/stats_utils.py` computes per-stat mean/std/coefficient-of-variation
    after removing outlier games, and buckets that into a stability rating.
 3. `core/defense_analysis.py` aggregates every team's pass/run defense and
