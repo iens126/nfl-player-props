@@ -1,0 +1,12 @@
+**/__pycache__/
+**/*.pyc
+**/.ipynb_checkpoints/
+backend/.venv/
+frontend/node_modules/
+frontend/dist/
+**/.DS_Store
+**/.env
+**/.env.*
+!**/.env.example
+.git/
+gui/

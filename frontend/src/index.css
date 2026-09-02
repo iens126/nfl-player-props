@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-canvas: #05070c;
+  --color-surface: #0d111a;
+  --color-surface-2: #131826;
+  --color-surface-3: #1a2032;
+  --color-border: #232a3d;
+  --color-border-soft: #1a2032;
+
+  --color-text: #eef1f8;
+  --color-text-muted: #93a0bb;
+  --color-text-faint: #5c6684;
+
+  --color-accent: #6366f1;
+  --color-accent-soft: #818cf8;
+  --color-cyan: #22d3ee;
+  --color-over: #22c55e;
+  --color-under: #f43f5e;
+  --color-warn: #f59e0b;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  background-image:
+    radial-gradient(circle at 15% 0%, rgba(99, 102, 241, 0.10), transparent 45%),
+    radial-gradient(circle at 85% 0%, rgba(34, 211, 238, 0.07), transparent 40%);
+  background-attachment: fixed;
+}
+
+::selection {
+  background: rgba(99, 102, 241, 0.35);
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* thin, unobtrusive scrollbars for horizontally-scrolling tables */
+.scroll-thin::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 999px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--color-surface-2) 25%, var(--color-surface-3) 37%, var(--color-surface-2) 63%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s ease infinite;
+}
