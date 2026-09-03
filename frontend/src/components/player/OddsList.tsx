@@ -1,5 +1,6 @@
 import { ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline'
 import type { OddsResponse } from '../../api/types'
+import { OddsFreshness } from './OddsFreshness'
 
 function formatPrice(price: number | null) {
   if (price === null || price === undefined) return '—'
@@ -85,12 +86,11 @@ export function OddsList({ odds, loading }: { odds: OddsResponse | null; loading
         sees, so a difference between these numbers and the projection is not an edge — it is
         usually information the model is missing.
       </p>
-      {odds.fetched_at && (
-        <p className="mt-1.5 text-[11px] text-text-faint">
-          Fetched {new Date(odds.fetched_at).toLocaleTimeString()}
-          {odds.requests_remaining ? ` · ${odds.requests_remaining} API credits left` : ''}
-        </p>
-      )}
+      <OddsFreshness
+        fetchedAt={odds.fetched_at}
+        requestsRemaining={odds.requests_remaining}
+        className="mt-1.5 text-[11px] text-text-faint"
+      />
     </div>
   )
 }

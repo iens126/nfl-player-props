@@ -6,6 +6,7 @@ import { useAsync } from '../hooks/useAsync'
 import { Card, SectionHeading } from '../components/common/Card'
 import { Skeleton } from '../components/common/Skeleton'
 import { ErrorState } from '../components/common/ErrorState'
+import { OddsFreshness } from '../components/player/OddsFreshness'
 import { statLabel } from '../lib/statLabels'
 import type { BookLine, OddsBoardEntry } from '../api/types'
 
@@ -204,14 +205,10 @@ export default function OddsBoard() {
                 <span>
                   Prices are American odds (over / under). "Line" is the median across books.
                 </span>
-                {board.data.fetched_at && (
-                  <span>
-                    Updated {new Date(board.data.fetched_at).toLocaleTimeString()}
-                    {board.data.requests_remaining
-                      ? ` · ${board.data.requests_remaining} credits left`
-                      : ''}
-                  </span>
-                )}
+                <OddsFreshness
+                  fetchedAt={board.data.fetched_at}
+                  requestsRemaining={board.data.requests_remaining}
+                />
               </div>
             </Card>
           )}
