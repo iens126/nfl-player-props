@@ -33,6 +33,10 @@ const PASS_TYPE_STATS = new Set([
 ])
 const RUSH_TYPE_STATS = new Set(['carries', 'rushing_yards', 'rushing_tds'])
 
+// How many games PlayerSummary.recent_averages covers. Mirrors SIM_WINDOW in
+// core/monte_carlo_sim.py, which is what the backend averages over.
+const RECENT_WINDOW_GAMES = 3
+
 // The prop most people are looking for first, per position, in preference order.
 const PREFERRED_STAT: Record<string, string[]> = {
   QB: ['passing_yards', 'passing_tds', 'completions'],
@@ -267,16 +271,21 @@ export default function Dashboard() {
   const showRushing = summary.data?.available_stats.some((s) => RUSH_TYPE_STATS.has(s)) ?? false
 
   return (
-    <div className="mx-auto max-w-7xl px-4 pb-24 pt-8 sm:px-6 lg:px-8">
-      <div className="mb-6">
+    <div className="mx-auto max-w-7xl px-4 pb-24 pt-8 sm:px-6 lg:px-8 2xl:max-w-[1680px]">
+      <div className="mb-5">
         <h1 className="text-2xl font-extrabold tracking-tight text-text sm:text-3xl">Player Prop Analysis</h1>
-        <p className="mt-1.5 max-w-2xl text-sm text-text-muted">
-          Pick a player and matchup to see recent form, opponent defense, and a modelled
-          over/under projection for any prop line.
-        </p>
+        {/* The standfirst explains the tool, which stops being useful the
+            moment there's a player on screen - and it was costing vertical
+            space the analysis wanted. */}
+        {!player && (
+          <p className="mt-1.5 max-w-2xl text-sm text-text-muted">
+            Pick a player and matchup to see recent form, opponent defense, and a modelled
+            over/under projection for any prop line.
+          </p>
+        )}
       </div>
 
-      <HowItWorks />
+      <HowItWorks startCollapsed={!!player} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="order-2 space-y-6 lg:order-1">
@@ -330,111 +339,132 @@ export default function Dashboard() {
                 <PlayerHeader summary={summary.data} opponent={opponentTeam} />
               </Card>
 
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-                <StatCard
-                  label="Projection"
-                  value={projection.data ? projection.data.projection.toFixed(1) : '—'}
-                  tone="accent"
-                />
-                <StatCard
-                  label="Prob. Over"
-                  value={projection.data ? `${(projection.data.prob_over * 100).toFixed(0)}%` : '—'}
-                  tone="over"
-                />
-                <StatCard
-                  label="Prob. Under"
-                  value={projection.data ? `${(projection.data.prob_under * 100).toFixed(0)}%` : '—'}
-                  tone="under"
-                />
-                <StatCard
-                  label="Recent Avg"
-                  value={stat && summary.data.recent_averages[stat] !== undefined ? summary.data.recent_averages[stat].toFixed(1) : '—'}
-                />
-                <StatCard
-                  label="Season Avg"
-                  value={stat && summary.data.season_averages[stat] !== undefined ? summary.data.season_averages[stat].toFixed(1) : '—'}
-                />
-                <StatCard
-                  label="Stability"
-                  value={summary.data.stability.find((s) => s.stat === stat)?.rating ?? '—'}
-                  tone="neutral"
-                />
+              {/* Prop analysis sits directly under the player, because every
+                  number below it is specific to the stat and line chosen here.
+                  The chart runs alongside on wide screens so the projection and
+                  the form behind it are visible together rather than a scroll
+                  apart. */}
+              <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <Card>
+                  <SectionHeading title="Prop Analysis" subtitle="Enter a line to see the model's over/under read" />
+                  <PropForm
+                    availableStats={summary.data.available_stats}
+                    stat={stat}
+                    onStatChange={setStat}
+                    line={lineInput}
+                    onLineChange={setLineInput}
+                    models={models.data ?? []}
+                    model={model}
+                    onModelChange={setModel}
+                  />
+
+                  <div className="mt-4 grid grid-cols-3 gap-2.5">
+                    <StatCard
+                      label="Projection"
+                      value={projection.data ? projection.data.projection.toFixed(1) : '—'}
+                      sublabel={stat ? statLabel(stat) : undefined}
+                      tone="accent"
+                    />
+                    <StatCard
+                      label="Prob. Over"
+                      value={projection.data ? `${(projection.data.prob_over * 100).toFixed(0)}%` : '—'}
+                      sublabel={line !== null ? `over ${line}` : undefined}
+                      tone="over"
+                    />
+                    <StatCard
+                      label="Prob. Under"
+                      value={projection.data ? `${(projection.data.prob_under * 100).toFixed(0)}%` : '—'}
+                      sublabel={line !== null ? `under ${line}` : undefined}
+                      tone="under"
+                    />
+                    <StatCard
+                      label="Recent Avg"
+                      value={stat && summary.data.recent_averages[stat] !== undefined ? summary.data.recent_averages[stat].toFixed(1) : '—'}
+                      sublabel={`Last ${RECENT_WINDOW_GAMES} games`}
+                    />
+                    <StatCard
+                      label="Season Avg"
+                      value={stat && summary.data.season_averages[stat] !== undefined ? summary.data.season_averages[stat].toFixed(1) : '—'}
+                      sublabel={`${summary.data.games_played} games`}
+                    />
+                    <StatCard
+                      label="Stability"
+                      value={summary.data.stability.find((s) => s.stat === stat)?.rating ?? '—'}
+                      sublabel="week to week"
+                      tone="neutral"
+                    />
+                  </div>
+
+                  <div className="mt-4">
+                    {!opponent && <p className="text-sm text-text-faint">Select an opponent to run a projection.</p>}
+                    {opponent && line === null && <p className="text-sm text-text-faint">Enter a prop line above to see the model's projection.</p>}
+                    {opponent && line !== null && projection.loading && <ProjectionSkeleton />}
+                    {opponent && line !== null && projection.error && <ErrorState message={projection.error} />}
+                    {opponent && line !== null && !projection.loading && projection.data && (
+                      <OverUnderPanel result={projection.data} />
+                    )}
+                  </div>
+                </Card>
+
+                {stat && opponent ? (
+                  <Card>
+                    <SectionHeading
+                      title="Performance Chart"
+                      subtitle={
+                        range === 'career'
+                          ? `${summary.data.team} ${statLabel(stat)} across their career, against what ${opponent} allows`
+                          : `${summary.data.team} ${statLabel(stat)} by week, against what ${opponent} allows`
+                      }
+                    />
+                    {chart.loading && <Skeleton className="h-72 w-full" />}
+                    {chart.error && <ErrorState message={chart.error} />}
+                    {chart.data && (
+                      <PerformanceChart
+                        chart={chart.data}
+                        range={range}
+                        onRangeChange={setRange}
+                        line={line}
+                        opponentAbbr={opponent}
+                        playerAbbr={summary.data.team}
+                        colors={chartColors}
+                      />
+                    )}
+                  </Card>
+                ) : (
+                  <Card className="flex items-center justify-center py-12 text-center">
+                    <p className="max-w-xs text-sm text-text-faint">
+                      Pick an opponent to chart this player against what that defense allows.
+                    </p>
+                  </Card>
+                )}
               </div>
 
-              <Card>
-                <SectionHeading title="Prop Analysis" subtitle="Enter a line to see the model's over/under read" />
-                <PropForm
-                  availableStats={summary.data.available_stats}
-                  stat={stat}
-                  onStatChange={setStat}
-                  line={lineInput}
-                  onLineChange={setLineInput}
-                  models={models.data ?? []}
-                  model={model}
-                  onModelChange={setModel}
-                />
-
-                <div className="mt-5">
-                  {!opponent && <p className="text-sm text-text-faint">Select an opponent to run a projection.</p>}
-                  {opponent && line === null && <p className="text-sm text-text-faint">Enter a prop line above to see the model's projection.</p>}
-                  {opponent && line !== null && projection.loading && <ProjectionSkeleton />}
-                  {opponent && line !== null && projection.error && <ErrorState message={projection.error} />}
-                  {opponent && line !== null && !projection.loading && projection.data && (
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-                        <OverUnderPanel result={projection.data} />
-                        <ModelConsensus result={projection.data} />
-                      </div>
-                      <HitRatePanel result={projection.data} />
-                    </div>
-                  )}
-
-                  {/* The book panels and the model write-up don't depend on the
-                      projection, so they sit outside its loading gate. Inside
-                      it, every keystroke in the line field unmounted them:
-                      the odds flickered out and back, and the line explorer
-                      lost its slider position on each edit. */}
-                  {opponent && (
-                    <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
-                      <OddsList odds={odds.data} loading={odds.loading} />
-                      <LineExplorer
-                        alternates={alternates.data}
-                        loading={alternates.loading}
-                        oddsPending={odds.loading}
-                        requested={alternates.requested}
-                        onRequest={loadAlternates}
-                        onProbabilityFor={(line) => alternates.probabilities[line] ?? null}
-                      />
-                      <ModelInfoPanel info={activeModelInfo} />
-                    </div>
-                  )}
+              {/* Supporting reads. Three across on a wide screen so the whole
+                  picture fits a browser window instead of a long scroll. */}
+              {opponent && line !== null && !projection.loading && projection.data && (
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                  <ModelConsensus result={projection.data} />
+                  <HitRatePanel result={projection.data} />
+                  <ModelInfoPanel info={activeModelInfo} />
                 </div>
-              </Card>
+              )}
 
-              {stat && opponent && (
-                <Card>
-                  <SectionHeading
-                    title="Performance Chart"
-                    subtitle={
-                      range === 'career'
-                        ? `${summary.data.team} ${statLabel(stat)} across their career, against what ${opponent} allows`
-                        : `${summary.data.team} ${statLabel(stat)} by week, against what ${opponent} allows`
-                    }
+              {/* The book panels don't depend on the projection, so they sit
+                  outside its loading gate. Inside it, every keystroke in the
+                  line field unmounted them: the odds flickered out and back,
+                  and the line explorer lost its slider position on each edit. */}
+              {opponent && (
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                  <OddsList odds={odds.data} loading={odds.loading} />
+                  <LineExplorer
+                    alternates={alternates.data}
+                    loading={alternates.loading}
+                    oddsPending={odds.loading}
+                    requested={alternates.requested}
+                    onRequest={loadAlternates}
+                    onProbabilityFor={(line) => alternates.probabilities[line] ?? null}
                   />
-                  {chart.loading && <Skeleton className="h-72 w-full" />}
-                  {chart.error && <ErrorState message={chart.error} />}
-                  {chart.data && (
-                    <PerformanceChart
-                      chart={chart.data}
-                      range={range}
-                      onRangeChange={setRange}
-                      line={line}
-                      opponentAbbr={opponent}
-                      playerAbbr={summary.data.team}
-                      colors={chartColors}
-                    />
-                  )}
-                </Card>
+                </div>
               )}
 
               <Card>

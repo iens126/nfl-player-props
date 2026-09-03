@@ -32,13 +32,17 @@ const STEPS = [
  * first-time visitor knows what the tool is for; collapsed state is remembered
  * so it doesn't nag people who already know.
  */
-export function HowItWorks() {
+export function HowItWorks({ startCollapsed = false }: { startCollapsed?: boolean } = {}) {
   const [collapsed, setCollapsed] = useState(() => {
     try {
-      return localStorage.getItem(STORAGE_KEY) === '1'
+      const stored = localStorage.getItem(STORAGE_KEY)
+      // An explicit choice wins; otherwise collapse when the caller says the
+      // page already has something more useful to show.
+      if (stored !== null) return stored === '1'
     } catch {
-      return false
+      // Storage unavailable - fall through to the caller's preference.
     }
+    return startCollapsed
   })
 
   useEffect(() => {

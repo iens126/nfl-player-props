@@ -3,7 +3,7 @@ import { DataFreshness } from './DataFreshness'
 export function Footer() {
   return (
     <footer className="border-t border-border/80 py-8">
-      <div className="mx-auto max-w-7xl px-4 text-xs leading-relaxed text-text-faint sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl px-4 text-xs leading-relaxed text-text-faint sm:px-6 lg:px-8 2xl:max-w-[1680px]">
         <p>
           GridEdge is an independent analytics project and is not affiliated with, endorsed by, or
           sponsored by the NFL or any team. Projections and probabilities are statistical model

@@ -16,7 +16,7 @@ export function NavBar() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-border/80 bg-canvas/85 backdrop-blur-md">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8 2xl:max-w-[1680px]">
         <NavLink to="/" className="flex items-center gap-2.5" onClick={() => setOpen(false)}>
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-accent to-cyan">
             <ChartBarSquareIcon className="h-5 w-5 text-white" />
