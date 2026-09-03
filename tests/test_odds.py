@@ -300,3 +300,25 @@ def test_upcoming_games_without_a_key_degrades():
         result = odds.upcoming_games()
     assert result['status'] == 'not_configured'
     assert result['games'] == []
+
+
+def test_team_names_reverse_to_abbreviations():
+    assert odds.abbr_for_team_name('Seattle Seahawks') == 'SEA'
+    assert odds.abbr_for_team_name('New England Patriots') == 'NE'
+    # Both LA and LAR map to the Rams; nflverse schedules use 'LA'.
+    assert odds.abbr_for_team_name('Los Angeles Rams') == 'LA'
+    assert odds.abbr_for_team_name('Los Angeles Chargers') == 'LAC'
+
+
+def test_unknown_or_missing_team_name_resolves_to_none():
+    assert odds.abbr_for_team_name('Toronto Raptors') is None
+    assert odds.abbr_for_team_name(None) is None
+    assert odds.abbr_for_team_name('') is None
+
+
+def test_every_abbreviation_round_trips_through_the_reverse_map():
+    for abbr, full in odds.TEAM_NAMES.items():
+        resolved = odds.abbr_for_team_name(full)
+        assert resolved is not None
+        # LA/LAR share a name, so accept either spelling of the Rams.
+        assert odds.TEAM_NAMES[resolved] == full, f"{abbr} -> {full} -> {resolved}"

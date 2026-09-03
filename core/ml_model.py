@@ -235,6 +235,14 @@ def train(stat: str) -> TrainedModel | None:
     ss_res = float(((val_pred - yv) ** 2).sum())
     ss_tot = float(((yv - yv.mean()) ** 2).sum()) or 1.0
 
+    # R^2 against the league-wide mean flatters this model badly: most of it is
+    # just knowing that a WR1 out-produces a WR3, which takes no model at all.
+    # The honest question is whether it beats each player's *own* recent
+    # average, so score it against that baseline too. Expect a small number -
+    # single-game production is mostly game script and target luck.
+    own_average = val_df['form_long'].to_numpy(float)
+    ss_own = float(((own_average - yv) ** 2).sum()) or 1.0
+
     # Calibration check: price each validation game against a plausible line
     # (the player's own longer-run form) and compare stated vs actual.
     lines = val_df['form_long'].to_numpy(float)
@@ -244,6 +252,7 @@ def train(stat: str) -> TrainedModel | None:
     model.metrics = {
         'val_mae': float(np.mean(np.abs(val_pred - yv))),
         'val_r2': 1.0 - ss_res / ss_tot,
+        'val_r2_within': 1.0 - ss_res / ss_own,
         'baseline_mae': float(np.mean(np.abs(baseline - yv))),
         'brier': float(np.mean((probs - hits) ** 2)),
         'stated_rate': float(probs.mean()),

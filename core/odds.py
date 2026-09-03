@@ -68,6 +68,21 @@ TEAM_NAMES = {
     'TB': 'Tampa Bay Buccaneers', 'TEN': 'Tennessee Titans', 'WAS': 'Washington Commanders',
 }
 
+# The Odds API names teams in full; the rest of the app works in nflverse
+# abbreviations. First entry wins for the Rams, whose 'LA' spelling is the one
+# nflverse uses in schedules and stat lines.
+ABBR_BY_TEAM_NAME: dict[str, str] = {}
+for _abbr, _full in TEAM_NAMES.items():
+    ABBR_BY_TEAM_NAME.setdefault(_full, _abbr)
+
+
+def abbr_for_team_name(name: str | None) -> str | None:
+    """nflverse abbreviation for a full team name, or None if unrecognised."""
+    if not name:
+        return None
+    return ABBR_BY_TEAM_NAME.get(name.strip())
+
+
 _cache: dict[str, tuple[float, object]] = {}
 
 

@@ -87,8 +87,10 @@ export function ModelInfoPanel({ info }: { info: ModelInfo | null }) {
               </dd>
             </div>
             <div>
-              <dt className="text-text-faint">Variance explained</dt>
-              <dd className="tabular font-semibold text-text">{(m.val_r2 * 100).toFixed(0)}%</dd>
+              <dt className="text-text-faint">Skill vs. the player's own average</dt>
+              <dd className="tabular font-semibold text-text">
+                {(m.val_r2_within * 100).toFixed(1)}%
+              </dd>
             </div>
             <div className="col-span-2">
               <dt className="text-text-faint">Calibration</dt>
@@ -101,8 +103,13 @@ export function ModelInfoPanel({ info }: { info: ModelInfo | null }) {
             </div>
           </dl>
           <p className="mt-2 text-[10px] leading-relaxed text-text-faint">
-            Football is mostly noise: even a good model explains well under half the
-            game-to-game variation. Treat these as rough odds, not forecasts.
+            That skill figure is deliberately the unflattering one. Scored against the
+            league average this model looks like {(m.val_r2 * 100).toFixed(0)}%, but almost all
+            of that is just knowing a starter out-produces a backup — no model needed. Against
+            each player's <em>own</em> recent average, which is the question that actually
+            matters here, it adds {(m.val_r2_within * 100).toFixed(1)}%. Single-game production
+            is mostly game script and target luck, and no public model built on box scores
+            changes that. Treat every number here as rough odds, not a forecast.
           </p>
         </div>
       )}

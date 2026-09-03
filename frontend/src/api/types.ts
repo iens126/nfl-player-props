@@ -91,7 +91,11 @@ export interface FeatureImportance {
 
 export interface ModelMetrics {
   val_mae: number
+  /** R² against the league-wide mean. Mostly reflects telling starters from
+   *  backups, so it reads far higher than the model's real predictive skill. */
   val_r2: number
+  /** R² against each player's own recent average — the honest measure. */
+  val_r2_within: number
   baseline_mae: number
   brier: number
   stated_rate: number
@@ -161,6 +165,9 @@ export interface OddsBoardEntry {
   player: string
   consensus_line: number | null
   books: BookLine[]
+  /** Resolved from the roster; null when the book's spelling doesn't match. */
+  team: string | null
+  opponent: string | null
 }
 
 export interface OddsBoardResponse {

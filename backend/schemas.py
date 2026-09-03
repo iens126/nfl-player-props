@@ -187,6 +187,11 @@ class OddsBoardEntry(BaseModel):
     player: str
     consensus_line: Optional[float] = None
     books: list[BookLine] = []
+    # Resolved from the roster so a click through to the analysis page carries
+    # the matchup it came from instead of re-guessing it. Null when the book's
+    # spelling of the name doesn't match nflverse's.
+    team: Optional[str] = None
+    opponent: Optional[str] = None
 
 
 class OddsBoardResponse(BaseModel):

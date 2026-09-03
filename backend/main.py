@@ -236,8 +236,42 @@ def odds_board(
 
     One upstream request covers the whole game, so listing all players costs
     the same single credit that looking up one of them would.
+
+    Each row is tagged with the player's team and their opponent in this game,
+    so opening a line carries the matchup it came from. The odds provider
+    doesn't say which side a player is on, so it's resolved against the roster.
     """
-    return odds_api.board(event_id, stat)
+    result = odds_api.board(event_id, stat)
+    if result.get('status') == 'ok':
+        _tag_matchup(result)
+    return result
+
+
+def _tag_matchup(board: dict) -> None:
+    """Fill in each entry's team/opponent from the roster, in place."""
+    game = board.get('game') or {}
+    home = odds_api.abbr_for_team_name(game.get('home_team'))
+    away = odds_api.abbr_for_team_name(game.get('away_team'))
+    if not home or not away:
+        return
+
+    try:
+        roster = load_current_rosters()
+    except Exception:
+        logger.exception("Could not load rosters to tag the odds board")
+        return
+
+    sides = {home: away, away: home}
+    for entry in board.get('entries', []):
+        name = entry.get('player')
+        if name is None or name not in roster.index:
+            continue
+        team = roster.loc[name, 'team']
+        # A player whose roster team isn't in this game (a name collision, or a
+        # mid-week move) is left untagged rather than guessed at.
+        if team in sides:
+            entry['team'] = team
+            entry['opponent'] = sides[team]
 
 
 @app.get("/api/players", response_model=list[PlayerListItem])

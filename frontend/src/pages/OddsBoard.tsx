@@ -67,6 +67,10 @@ export default function OddsBoard() {
   function openPlayer(entry: OddsBoardEntry) {
     const params = new URLSearchParams({ player: entry.player, stat })
     if (entry.consensus_line !== null) params.set('line', String(entry.consensus_line))
+    // Carry the matchup this line came from. Without it the dashboard falls
+    // back to guessing the player's next scheduled opponent, which is wrong
+    // whenever you're looking at a game that isn't their next one.
+    if (entry.opponent) params.set('opponent', entry.opponent)
     navigate(`/?${params.toString()}`)
   }
 

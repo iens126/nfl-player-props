@@ -48,25 +48,29 @@ export default function Dashboard() {
   const [position, setPosition] = useState<string | null>(null)
   const [team, setTeam] = useState<string | null>(null)
   const [player, setPlayer] = useState<string | null>(() => searchParams.get('player'))
-  const [opponent, setOpponent] = useState<string | null>(null)
+  const [opponent, setOpponent] = useState<string | null>(() => searchParams.get('opponent'))
   const [stat, setStat] = useState<string | null>(() => searchParams.get('stat'))
   const [lineInput, setLineInput] = useState(() => searchParams.get('line') ?? '')
   const [range, setRange] = useState<ChartRange>('season')
-  const [model, setModel] = useState<ModelKey>('ensemble')
+  const [model, setModel] = useState<ModelKey>(
+    () => (searchParams.get('model') as ModelKey | null) ?? 'ensemble',
+  )
   const { theme } = useTheme()
 
+  // Keep the URL describing what's on screen, so a view can be bookmarked,
+  // reloaded, or sent to someone else and come back the same. Written with
+  // `replace` so typing a line doesn't fill the back button with history.
   useEffect(() => {
-    if (!searchParams.has('player') && !searchParams.has('stat') && !searchParams.has('line')) return
-    const incomingPlayer = searchParams.get('player')
-    const incomingStat = searchParams.get('stat')
-    const incomingLine = searchParams.get('line')
-    if (incomingPlayer) setPlayer(incomingPlayer)
-    if (incomingStat) setStat(incomingStat)
-    if (incomingLine) setLineInput(incomingLine)
-    // Clear them so the dashboard behaves normally from here on.
-    setSearchParams({}, { replace: true })
+    const params = new URLSearchParams()
+    if (player) params.set('player', player)
+    if (stat) params.set('stat', stat)
+    if (lineInput) params.set('line', lineInput)
+    if (opponent) params.set('opponent', opponent)
+    if (model !== 'ensemble') params.set('model', model)
+    setSearchParams(params, { replace: true })
+    // setSearchParams isn't referentially stable, so depending on it would loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams])
+  }, [player, stat, lineInput, opponent, model])
 
   const teams = useAsync(() => api.teams(), [])
   const positions = useAsync(() => api.positions(), [])
