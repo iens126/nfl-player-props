@@ -45,17 +45,30 @@ def remove_outliers(df, cols=None, z_thresh=2.5):
     mask = (np.abs(z_scores) < z_thresh).all(axis=1)
     cleaned_df = df[mask].copy()
 
+    # With a handful of games the standard deviation can be zero, which makes
+    # every z-score NaN and drops the whole frame - and "this player has no
+    # games" is never the right answer to "which of their games were unusual".
+    # Callers downstream index into the result, so an empty frame surfaced as a
+    # 500 on the player summary endpoint for anyone with very few appearances.
+    if cleaned_df.empty:
+        logger.debug("Outlier filter would empty %s; keeping all games", len(df))
+        return df.copy()
+
     removed = len(df) - len(cleaned_df)
     if removed > 0:
         logger.debug("Removed %d outlier game(s) for %s", removed, df['player_display_name'].iloc[0])
     return cleaned_df
 
 def determine_stability(df):
+    if df.empty:
+        raise ValueError("Cannot compute stability without any games")
+
     df = df.drop(columns = 'week')
     df = remove_outliers(df,
                         cols=bettable_columns,
                         z_thresh=2.5)
-    player_name = df['player_display_name'].unique()[0]
+    names = df['player_display_name'].unique()
+    player_name = names[0] if len(names) else None
     means = df.mean(numeric_only=True)
     stds = df.std(numeric_only=True)
     cv = stds/means

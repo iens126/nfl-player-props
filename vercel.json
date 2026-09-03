@@ -1,0 +1,29 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "cd frontend && npm ci && npm run build",
+  "outputDirectory": "frontend/dist",
+  "installCommand": "echo 'install handled by buildCommand'",
+  "functions": {
+    "api/**/*.py": {
+      "runtime": "@vercel/python@4.3.0",
+      "includeFiles": "core/**"
+    }
+  },
+  "headers": [
+    {
+      "source": "/data/players/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=300, stale-while-revalidate=86400" }
+      ]
+    },
+    {
+      "source": "/data/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=300, stale-while-revalidate=86400" }
+      ]
+    }
+  ],
+  "rewrites": [
+    { "source": "/((?!api/|data/|assets/).*)", "destination": "/index.html" }
+  ]
+}

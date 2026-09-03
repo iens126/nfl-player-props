@@ -1,0 +1,91 @@
+name: Refresh data bundle
+
+# The app is static: it serves a precomputed JSON bundle rather than querying
+# nflverse per request. This job is what keeps that bundle current, so if it
+# stops running the site stays up and quietly goes stale — which is why the
+# manifest carries a generated_at timestamp the UI surfaces, and why failures
+# here should be treated as real.
+on:
+  schedule:
+    # 09:15 UTC daily — after Sunday/Monday night games have settled into
+    # nflverse, and early enough to catch roster moves before Sunday.
+    - cron: '15 9 * * *'
+  workflow_dispatch:
+    inputs:
+      skip_models:
+        description: 'Skip model retraining (faster, data only)'
+        type: boolean
+        default: false
+  push:
+    # Rebuild whenever the pipeline or the maths behind it changes, so a code
+    # change can't leave the committed bundle describing the old behaviour.
+    branches: [main]
+    paths:
+      - 'core/**'
+      - 'scripts/precompute.py'
+      - '.github/workflows/refresh-data.yml'
+
+concurrency:
+  group: refresh-data
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Record the previous model metrics
+        id: before
+        run: |
+          if [ -f frontend/public/data/manifest.json ]; then
+            cp frontend/public/data/manifest.json /tmp/manifest-before.json
+            echo "had_previous=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "had_previous=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the bundle
+        run: |
+          python scripts/precompute.py --out frontend/public/data \
+            ${{ inputs.skip_models && '--skip-models' || '' }}
+
+      - name: Check the bundle is sane
+        run: python scripts/check_bundle.py frontend/public/data
+
+      - name: Check the model hasn't regressed
+        if: steps.before.outputs.had_previous == 'true' && !inputs.skip_models
+        run: |
+          python scripts/check_bundle.py frontend/public/data \
+            --compare-metrics /tmp/manifest-before.json
+
+      - name: Verify the browser engine still matches Python
+        run: |
+          cd frontend
+          npm ci
+          npx vitest run src/engine --reporter=dot
+
+      - name: Commit the refreshed bundle
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/public/data
+          if git diff --staged --quiet; then
+            echo "No data changes."
+            exit 0
+          fi
+          GENERATED=$(python -c "import json;print(json.load(open('frontend/public/data/manifest.json'))['generated_at'])")
+          git commit -m "Refresh data bundle ($GENERATED)"
+          git push

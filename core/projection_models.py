@@ -19,8 +19,14 @@ Why not just Monte Carlo a triangular distribution (the original approach)?
 
 So the models here are recency-weighted over a longer window, use shapes that
 match how the stat actually behaves (non-negative, right-skewed, discrete
-counts), and are evaluated analytically. Triangular Monte Carlo is kept as a
-selectable model so the original methodology stays available for comparison.
+counts), and are evaluated analytically. The original triangular shape is kept
+as a selectable model for comparison, but it too is now evaluated through its
+CDF rather than by sampling - same distribution, exact instead of approximate,
+and portable to the browser, which reproducing numpy's RNG would not be.
+
+Every function here is pure arithmetic on a values/weights vector: no pandas,
+no RNG, no I/O. That is what lets the identical maths run in the browser off a
+static data bundle, checked against these implementations by golden fixtures.
 """
 
 from __future__ import annotations
@@ -266,34 +272,52 @@ def empirical_kde(
 # Legacy: triangular Monte Carlo (the original methodology)
 # ---------------------------------------------------------------------------
 
-def triangular_monte_carlo(
+def triangular(
     values: np.ndarray,
     weights: np.ndarray,
     line: float,
     shift: float = 0.0,
-    n_simulations: int = 10000,
-    seed: int = 12345,
 ) -> ModelResult:
-    """The original model: fit a triangular to (min, mean, max) and sample it.
+    """The original model's shape: a triangle over (min, mean, max).
 
-    Kept selectable for comparison. Seeded so repeated requests at least agree
-    with each other; the bounded support is inherent to the shape, so lines
-    outside the observed window still resolve to 0% or 100%.
+    Kept selectable so the methodology this app started with stays available
+    for comparison. It is now evaluated through the triangular CDF rather than
+    by drawing 10,000 samples: same distribution, but exact instead of
+    approximate, identical every time, and expressible in the browser without
+    reproducing numpy's random number generator.
+
+    The bounded support is inherent to the shape, so lines outside the observed
+    window still resolve to 0% or 100% - which is precisely why it is no longer
+    the default.
     """
     a, c, b = float(np.min(values)), float(np.mean(values)), float(np.max(values))
     if b <= a:
         b = a + 1e-6
     c = min(max(c, a), b)
 
-    rng = np.random.default_rng(seed)
-    draws = rng.triangular(a, c, b, n_simulations) + shift
-    prob_over = float(np.mean(draws >= line))
+    # Shifting the distribution by `shift` is the same as shifting the line back.
+    x = line - shift
+    if x <= a:
+        prob_over = 1.0
+    elif x >= b:
+        prob_over = 0.0
+    elif x <= c:
+        prob_over = 1.0 - ((x - a) ** 2) / ((b - a) * (c - a)) if c > a else 1.0
+    else:
+        prob_over = ((b - x) ** 2) / ((b - a) * (b - c)) if b > c else 0.0
 
-    _mean, _var, ess = weighted_moments(values, weights)
+    mean = (a + b + c) / 3.0 + shift
+    variance = (a * a + b * b + c * c - a * b - a * c - b * c) / 18.0
+
+    _m, _v, ess = weighted_moments(values, weights)
     return ModelResult(
-        prob_over, float(np.mean(draws)), float(np.std(draws)),
-        'triangular', 'Triangular Monte Carlo', ess,
+        float(np.clip(prob_over, 0.0, 1.0)), mean, math.sqrt(max(variance, 0.0)),
+        'triangular', 'Triangular (original method)', ess,
     )
+
+
+# Retained so existing imports keep working.
+triangular_monte_carlo = triangular
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +366,7 @@ MODELS = {
     'lognormal': 'Zero-inflated lognormal - continuous, right-skewed yardage',
     'negbin': 'Negative binomial - discrete counting stats',
     'empirical': 'Smoothed empirical - the player\'s games, no assumed shape',
-    'triangular': 'Triangular Monte Carlo - the original sampling methodology',
+    'triangular': 'Triangular - the original method, evaluated exactly',
 }
 DEFAULT_MODEL = 'ensemble'
 
@@ -358,5 +382,5 @@ def run_model(
     if model == 'empirical':
         return empirical_kde(values, weights, line, shift)
     if model == 'triangular':
-        return triangular_monte_carlo(values, weights, line, shift)
+        return triangular(values, weights, line, shift)
     return ensemble(values, weights, line, stat, shift)

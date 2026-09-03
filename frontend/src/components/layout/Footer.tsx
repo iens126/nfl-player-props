@@ -1,3 +1,5 @@
+import { DataFreshness } from './DataFreshness'
+
 export function Footer() {
   return (
     <footer className="border-t border-border/80 py-8">
@@ -9,7 +11,11 @@ export function Footer() {
           and past results do not predict future outcomes. For informational and analytical
           purposes only.
         </p>
-        <p className="mt-3">Data via nflverse. © {new Date().getFullYear()} GridEdge.</p>
+        <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span>Data via nflverse. © {new Date().getFullYear()} GridEdge.</span>
+          <span aria-hidden="true">·</span>
+          <DataFreshness />
+        </div>
       </div>
     </footer>
   )

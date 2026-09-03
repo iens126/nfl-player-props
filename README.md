@@ -25,79 +25,140 @@ Pick a player and an opponent, and GridEdge shows:
 - **Odds Board** — a plain list of DraftKings/FanDuel/BetMGM/Caesars lines for a whole game; click any row to open that player's history and projection (needs a free API key; see below)
 - **Model transparency** — every model explains what it looks at in plain language and links out to a description of the technique; the trained model reports its own measured accuracy on a season it never saw
 
+## Architecture: there is no analytics server
+
+GridEdge is a **static site**. The pandas work happens once, on a schedule, and
+the results ship as JSON that a CDN serves; the browser holds those inputs and
+does the joins and arithmetic itself.
+
+```
+   GitHub Actions (daily)                    Vercel CDN            Browser
+   ─────────────────────                     ──────────            ───────
+   nflverse ─▶ scripts/precompute.py ──▶ /data/*.json ──────▶ src/engine/*
+              (pandas, model training)     ~670 KB gzip       (projection maths)
+
+                                          /api/odds*  ◀────── live odds only
+                                          (serverless, needs a secret key)
+```
+
+Why this shape:
+
+- **Nothing to keep warm.** The previous FastAPI service ran on Render's free
+  tier, which spins down when idle; a cold start measured **14.3 seconds**
+  against **127 ms** warm. A CDN has no such state.
+- **It costs nothing.** No always-on process, no paid instance.
+- **It can't be taken down by a bad deploy.** There is no Python in production.
+  If the refresh job breaks, the last good bundle keeps serving.
+- **It doesn't constrain the analytics.** The bundle ships *data*, not
+  precomputed answers: full game logs plus bounded aggregates. Any future
+  question — cross-player correlations, league-wide screens, new stat slices —
+  is answerable in the browser without changing the pipeline.
+
+`backend/` still exists, but as a **build-time library, not a deployed
+service**: `scripts/precompute.py` calls its route functions directly so the
+bundle can't drift from the response shapes the frontend expects.
+
+### Keeping the browser maths honest
+
+The projection models were ported from Python to TypeScript, which is exactly
+the kind of change that produces the same shapes with subtly different numbers.
+So `scripts/precompute.py` emits **golden fixtures** straight from the Python
+engine, and `frontend/src/engine/engine.test.ts` replays 200 of them against
+the TypeScript. They currently agree to 1e-5 on every projection, probability,
+matchup weight and hit rate.
+
+If you change the maths: change the Python first, regenerate the bundle, then
+mirror it in TypeScript until the fixtures pass again.
+
 ## Tech stack
 
-- **Frontend:** React + TypeScript + Vite + Tailwind CSS v4, Headless UI (accessible dropdowns), Recharts
-- **Backend:** FastAPI (Python), serving a clean JSON API over the analytics engine
-- **Analytics engine:** `core/` — pandas-based data pipeline with in-memory caching, plus a set of closed-form probability models (`projection_models.py`) that replaced the original triangular Monte Carlo sampler
-- **Data source:** [nflverse](https://github.com/nflverse) via `nflreadpy` (team stats, player stats, depth charts, rosters, schedules — eight seasons of game logs)
+- **Frontend:** React + TypeScript + Vite + Tailwind CSS v4, Headless UI, Recharts
+- **Browser engine:** `frontend/src/engine/` — the projection models, matchup
+  weight, hit rates and chart series, ported from `core/`
+- **Analytics engine:** `core/` — pandas pipeline, closed-form probability
+  models, and the trained ridge regression. Runs at build time only.
+- **Build-time API:** FastAPI in `backend/`, used by the precompute script
+- **Data source:** [nflverse](https://github.com/nflverse) via `nflreadpy` (eight seasons)
 - **Odds:** [The Odds API](https://the-odds-api.com) (optional, free tier)
 
 ## Project structure
 
 ```
-core/       analytics engine — data loading, stability, defense analysis,
-            projection models, the trained model, and the odds client
-tests/      test suites for the projection maths, trained model and odds client
-backend/    FastAPI app that wraps core/ and exposes it as a JSON API
-frontend/   React + Vite single-page app
-render.yaml Render Blueprint for deploying the API
+core/                analytics engine — data loading, stability, defense
+                     analysis, projection models, trained model, odds client
+backend/             FastAPI app; now a build-time library, not a service
+scripts/
+  precompute.py      builds the static bundle + parity fixtures
+  check_bundle.py    sanity + model-regression guards for CI
+api/                 Vercel serverless functions (live odds only)
+frontend/
+  src/engine/        the browser-side maths, ported from core/
+  public/data/       the generated bundle (committed, served by the CDN)
+tests/               Python suites: projection maths, ML model, odds, CORS
+.github/workflows/   scheduled data refresh
+vercel.json          static hosting + serverless function config
 ```
-
-## How frontend and backend talk to each other
-
-The frontend calls the backend over plain HTTP/JSON, using the base URL in
-`VITE_API_BASE_URL` (a Vite env var, baked in at build time). In production
-this points at the deployed Render API; locally it points at
-`http://127.0.0.1:8000`. The backend allows cross-origin requests only from
-the origins listed in its `CORS_ORIGINS` env var.
-
-No cookies, sessions, or auth — every endpoint is read-only except the
-projection endpoint, which is a stateless POST that runs a simulation and
-returns the result.
 
 ## Running locally
 
-### Backend
+You need Python once, to build the data bundle. After that the app is just a
+static site.
+
+### 1. Build the data bundle
 
 ```bash
-cd backend
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cd ..
-uvicorn backend.main:app --reload --port 8000
+cd backend && python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt && cd ..
+python scripts/precompute.py --out frontend/public/data
 ```
 
-The API is now at `http://127.0.0.1:8000` (interactive docs at `/docs`, health check at `/health`).
+Takes about 20 seconds and writes ~670 KB gzipped. Add `--skip-models` to skip
+retraining (much faster) or `--players 25` for a quick partial build.
 
-### Frontend
+The bundle is committed to the repo, so if you only want to run the frontend
+you can skip this entirely.
+
+### 2. Run the frontend
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env.development   # VITE_API_BASE_URL=http://127.0.0.1:8000
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open `http://localhost:5173`. No backend process — everything except live odds
+is computed in the browser from `frontend/public/data`.
+
+### 3. Live odds locally (optional)
+
+The odds endpoints are serverless functions, so they need the Vercel CLI:
+
+```bash
+npm i -g vercel
+ODDS_API_KEY=your-key vercel dev
+```
+
+Without it, the odds panels explain that they're unconfigured and everything
+else works normally.
 
 ## Environment variables
 
-**Backend** (`backend/.env.example`)
+**Build time / serverless functions**
 
 | Variable       | Purpose                                                                 |
 | -------------- | ------------------------------------------------------------------------ |
-| `CORS_ORIGINS` | Comma-separated list of origins allowed to call the API (your deployed frontend URL + `http://localhost:5173` for local dev) |
-| `ODDS_API_KEY` | Optional. Enables the Odds Board and the per-player lines panel — free key at [the-odds-api.com](https://the-odds-api.com) |
+| `ODDS_API_KEY` | Optional. Enables the Odds Board and per-player lines — free key at [the-odds-api.com](https://the-odds-api.com). Set it in the Vercel dashboard. |
 | `ODDS_CACHE_MINUTES` | Optional (default 10). How long odds are cached; higher spends fewer API credits |
-| `CAREER_SEASONS` | Optional (default 8). Seasons of history loaded for career views and model training |
+| `CAREER_SEASONS` | Optional (default 8). Seasons of history the precompute loads |
 
 **Frontend** (`frontend/.env.example`)
 
-| Variable              | Purpose                                    |
-| --------------------- | ------------------------------------------- |
-| `VITE_API_BASE_URL`   | Base URL of the FastAPI backend, no trailing slash |
+| Variable                | Purpose                                                    |
+| ----------------------- | ---------------------------------------------------------- |
+| `VITE_ODDS_BASE_URL`    | Optional. Where the odds functions live; empty means same-origin `/api`, which is what you want on Vercel. |
+
+There is no `CORS_ORIGINS` any more: the data is same-origin static files, and
+the odds functions are served from the same domain as the app.
 
 ## The data pipeline
 
@@ -225,52 +286,65 @@ deployed image.
 
 ## Deployment
 
-Both services deploy for free, straight from GitHub, with no server to manage:
+One Vercel project, free tier, no server to manage and nothing to keep warm.
 
-- **Backend → [Render](https://render.com)** (free web service tier — sleeps
-  after 15 minutes of inactivity, cold-starts in a few seconds on the next
-  request; no credit card required)
-- **Frontend → [Vercel](https://vercel.com)** (free static hosting for the
-  Vite build, global CDN, automatic HTTPS, no credit card required)
-
-### 1. Push this repo to GitHub
-
-```bash
-gh repo create gridedge --public --source=. --push
-# or create a repo on github.com and:
-git remote add origin <your-repo-url>
-git push -u origin main
-```
-
-### 2. Deploy the API on Render
-
-1. Sign in at [render.com](https://render.com) with GitHub.
-2. **New → Blueprint**, pick this repo. Render reads `render.yaml` at the repo
-   root and provisions the `gridedge-api` web service automatically.
-3. Once deployed, note the service URL (e.g. `https://gridedge-api.onrender.com`).
-
-### 3. Deploy the frontend on Vercel
+### 1. Deploy to Vercel
 
 1. Sign in at [vercel.com](https://vercel.com) with GitHub.
 2. **Add New → Project**, pick this repo.
-3. Set **Root Directory** to `frontend`. Vercel auto-detects the Vite preset
-   (build command / output directory also come from `frontend/vercel.json`).
-4. Add an environment variable: `VITE_API_BASE_URL` = the Render URL from step 2.
-5. Deploy. Note the resulting URL (e.g. `https://gridedge.vercel.app`).
+3. Leave **Root Directory** as the repo root — `vercel.json` handles the rest
+   (it builds `frontend/`, serves `frontend/dist`, and picks up the Python
+   functions in `api/`).
+4. Optionally add `ODDS_API_KEY` to enable live odds.
+5. Deploy.
 
-### 4. Connect them
+That's the whole deployment. The data bundle is committed, so it ships with the
+build.
 
-Back in the Render dashboard, set the `CORS_ORIGINS` env var on `gridedge-api`
-to your Vercel URL (comma-separate if you also want to allow a preview URL or
-custom domain), and redeploy. Update the "Live app" link at the top of this
-README with your Vercel URL.
+### 2. Turn on the scheduled refresh
 
-### Alternative: Docker
+`.github/workflows/refresh-data.yml` rebuilds the bundle daily at 09:15 UTC and
+commits it, which triggers a Vercel redeploy. It needs no secrets — just make
+sure Actions is enabled for the repo.
 
-`backend/Dockerfile` is provided for any platform that prefers a container
-over Render's native Python runtime (build from the repo root: `docker build
--f backend/Dockerfile -t gridedge-api .`, context must be the repo root since
-it copies both `backend/` and `core/`).
+You can also run it by hand from the Actions tab (**Refresh data bundle → Run
+workflow**), with an option to skip model retraining for a faster data-only run.
+
+### Retiring the old Render service
+
+The FastAPI service is no longer used by the site and can be deleted from the
+Render dashboard. `render.yaml` and `backend/Dockerfile` are kept so the API can
+still be run as a service if you ever want it (`uvicorn backend.main:app`), but
+nothing in production depends on it.
+
+## Maintenance
+
+Steady-state upkeep is close to zero, but the failure mode is quiet rather than
+loud: if the refresh stops, the CDN keeps serving the last good bundle and the
+site looks healthy while going stale. Three things guard against that.
+
+1. **The footer shows the data's age**, and warns after 36 hours — a failed
+   refresh becomes visible rather than silent.
+2. **`scripts/check_bundle.py` runs in CI** before anything is committed. It
+   fails the build on a stale timestamp, too few players or teams, an index
+   entry with no data file behind it, empty aggregates, or a malformed player
+   file.
+3. **A model-regression guard** fails the build if validation error rises more
+   than 15% against the previous bundle — a bad upstream data week can't
+   silently ship a worse model.
+
+Things worth knowing:
+
+- **GitHub disables scheduled workflows on public repos after ~60 days of
+  repository inactivity.** It emails a warning first. If the loop ever goes
+  quiet during a long off-season, re-enable it from the Actions tab.
+- **Season rollover is the one predictable annual chore**, in early September.
+  nflverse resolves "current season" differently for stats (last completed
+  season) than for rosters (current roster year), and the precompute has to
+  pick correctly for each; the `CAREER_SEASONS` window also slides.
+- **Upstream schema changes** break the build rather than the site. The last
+  good bundle keeps serving while you fix it — but only if you read the failure
+  email.
 
 ## Testing what was built
 
