@@ -2,8 +2,8 @@
 
 A statistical analytics tool for NFL player props: recent-form and career
 breakdowns, opponent defense matchups, a trained projection model with
-over/under probabilities for any prop line, and live sportsbook lines to
-compare it against.
+over/under probabilities for any prop line, and a browsable board of live
+sportsbook lines.
 
 **Live app:** [nfl-player-props.vercel.app](https://nfl-player-props.vercel.app)
 
@@ -22,7 +22,7 @@ Pick a player and an opponent, and GridEdge shows:
 - **Defensive matchup** — the opponent's pass/run defense averages and live league rank (computed from the current season's team data)
 - **Prop analysis** — enter any line and get a projection with over/under probabilities, plus a plain-English explanation of how the number was produced
 - **Hit rates** — how often the player has actually cleared that line, over the last 3/5/10 games, this season, and their whole career
-- **Live sportsbook lines** — DraftKings, FanDuel and others side by side with the model (needs a free API key; see below)
+- **Odds Board** — a plain list of DraftKings/FanDuel/BetMGM/Caesars lines for a whole game; click any row to open that player's history and projection (needs a free API key; see below)
 - **Model transparency** — every model explains what it looks at in plain language and links out to a description of the technique; the trained model reports its own measured accuracy on a season it never saw
 
 ## Tech stack
@@ -89,7 +89,7 @@ Open `http://localhost:5173`.
 | Variable       | Purpose                                                                 |
 | -------------- | ------------------------------------------------------------------------ |
 | `CORS_ORIGINS` | Comma-separated list of origins allowed to call the API (your deployed frontend URL + `http://localhost:5173` for local dev) |
-| `ODDS_API_KEY` | Optional. Enables the live sportsbook panel — free key at [the-odds-api.com](https://the-odds-api.com) |
+| `ODDS_API_KEY` | Optional. Enables the Odds Board and the per-player lines panel — free key at [the-odds-api.com](https://the-odds-api.com) |
 | `ODDS_CACHE_MINUTES` | Optional (default 10). How long odds are cached; higher spends fewer API credits |
 | `CAREER_SEASONS` | Optional (default 8). Seasons of history loaded for career views and model training |
 
@@ -186,8 +186,11 @@ implying more precision than exists.
 
 ## Live sportsbook odds (optional)
 
-Set `ODDS_API_KEY` to show DraftKings/FanDuel/BetMGM/Caesars lines next to the
-model's number. Get a free key at [the-odds-api.com](https://the-odds-api.com)
+Set `ODDS_API_KEY` to switch on the **Odds Board** — a browsable list of
+DraftKings/FanDuel/BetMGM/Caesars lines for a whole game, where any row opens
+that player's history and projection. The same lines also appear on a player's
+own page. Nothing is scored, ranked, or flagged as value: it is a listing, not
+a recommender. Get a free key at [the-odds-api.com](https://the-odds-api.com)
 (500 credits/month).
 
 Player props are billed **per event per market**, so responses are cached for

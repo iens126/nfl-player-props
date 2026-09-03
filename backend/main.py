@@ -38,6 +38,7 @@ from backend.model_docs import MODEL_DOCS
 from backend.schemas import (
     TeamOut, PlayerListItem, PlayerSummary, StabilityStat, GameLogResponse,
     ChartResponse, DefenseSummaryOut, ProjectionRequest, ProjectionResponse,
+    OddsGamesResponse, OddsBoardResponse,
     ScheduleGame, ModelInfo, FeatureImportance, OddsResponse,
 )
 
@@ -184,13 +185,32 @@ def live_odds(
     opponent: str = Query(..., min_length=2, max_length=4),
     stat: str = Query(..., min_length=1, max_length=50),
 ):
-    """Live sportsbook lines for one player/stat, for side-by-side comparison.
+    """Live sportsbook lines for one player/stat.
 
     Never raises on a provider problem - the response carries a status the UI
     renders as an explanation, so a missing API key or an exhausted quota
     degrades to a message instead of a broken panel.
     """
     return odds_api.player_prop(player, team.upper(), opponent.upper(), stat)
+
+
+@app.get("/api/odds/games", response_model=OddsGamesResponse)
+def odds_games():
+    """Games the books have listed, for picking which board to show."""
+    return odds_api.upcoming_games()
+
+
+@app.get("/api/odds/board", response_model=OddsBoardResponse)
+def odds_board(
+    event_id: str = Query(..., min_length=1, max_length=64),
+    stat: str = Query(..., min_length=1, max_length=50),
+):
+    """Every player's line for one stat in one game - the browsing list.
+
+    One upstream request covers the whole game, so listing all players costs
+    the same single credit that looking up one of them would.
+    """
+    return odds_api.board(event_id, stat)
 
 
 @app.get("/api/players", response_model=list[PlayerListItem])

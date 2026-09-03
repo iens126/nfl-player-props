@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ArrowsRightLeftIcon, CalendarDaysIcon } from '@heroicons/react/24/outline'
 import { api, ApiError } from '../api/client'
 import { useAsync } from '../hooks/useAsync'
@@ -18,7 +19,7 @@ import { Collapsible } from '../components/common/Collapsible'
 import { HowItWorks } from '../components/layout/HowItWorks'
 import { ModelConsensus } from '../components/player/ModelConsensus'
 import { HitRatePanel } from '../components/player/HitRatePanel'
-import { OddsComparison } from '../components/player/OddsComparison'
+import { OddsList } from '../components/player/OddsList'
 import { ModelInfoPanel } from '../components/player/ModelInfoPanel'
 import { statLabel } from '../lib/statLabels'
 import { matchupColors } from '../lib/teamColors'
@@ -40,15 +41,32 @@ const PREFERRED_STAT: Record<string, string[]> = {
 }
 
 export default function Dashboard() {
+  // The odds board links here with a player/stat/line already chosen, so the
+  // initial state honours those params before falling back to the defaults.
+  const [searchParams, setSearchParams] = useSearchParams()
+
   const [position, setPosition] = useState<string | null>(null)
   const [team, setTeam] = useState<string | null>(null)
-  const [player, setPlayer] = useState<string | null>(null)
+  const [player, setPlayer] = useState<string | null>(() => searchParams.get('player'))
   const [opponent, setOpponent] = useState<string | null>(null)
-  const [stat, setStat] = useState<string | null>(null)
-  const [lineInput, setLineInput] = useState('')
+  const [stat, setStat] = useState<string | null>(() => searchParams.get('stat'))
+  const [lineInput, setLineInput] = useState(() => searchParams.get('line') ?? '')
   const [range, setRange] = useState<ChartRange>('season')
   const [model, setModel] = useState<ModelKey>('ensemble')
   const { theme } = useTheme()
+
+  useEffect(() => {
+    if (!searchParams.has('player') && !searchParams.has('stat') && !searchParams.has('line')) return
+    const incomingPlayer = searchParams.get('player')
+    const incomingStat = searchParams.get('stat')
+    const incomingLine = searchParams.get('line')
+    if (incomingPlayer) setPlayer(incomingPlayer)
+    if (incomingStat) setStat(incomingStat)
+    if (incomingLine) setLineInput(incomingLine)
+    // Clear them so the dashboard behaves normally from here on.
+    setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   const teams = useAsync(() => api.teams(), [])
   const positions = useAsync(() => api.positions(), [])
@@ -297,7 +315,7 @@ export default function Dashboard() {
                       </div>
                       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                         <HitRatePanel result={projection.data} />
-                        <OddsComparison odds={odds.data} result={projection.data} loading={odds.loading} />
+                        <OddsList odds={odds.data} loading={odds.loading} />
                         <ModelInfoPanel info={activeModelInfo} />
                       </div>
                     </div>

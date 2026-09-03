@@ -132,11 +132,44 @@ export interface BookLine {
   last_update: string | null
 }
 
+export type OddsStatus = 'ok' | 'not_configured' | 'no_market' | 'no_event' | 'error'
+
 export interface OddsResponse {
-  status: 'ok' | 'not_configured' | 'no_market' | 'no_event' | 'error'
+  status: OddsStatus
   message: string | null
   books: BookLine[]
+  consensus_line: number | null
   market: string | null
+  fetched_at: string | null
+  requests_remaining: string | null
+}
+
+export interface OddsGame {
+  id: string
+  home_team: string | null
+  away_team: string | null
+  commence_time: string | null
+}
+
+export interface OddsGamesResponse {
+  status: OddsStatus
+  message: string | null
+  games: OddsGame[]
+}
+
+export interface OddsBoardEntry {
+  player: string
+  consensus_line: number | null
+  books: BookLine[]
+}
+
+export interface OddsBoardResponse {
+  status: OddsStatus
+  message: string | null
+  entries: OddsBoardEntry[]
+  game: OddsGame | null
+  market: string | null
+  stat: string | null
   fetched_at: string | null
   requests_remaining: string | null
 }

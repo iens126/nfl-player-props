@@ -127,17 +127,18 @@ export default function Methodology() {
               .
             </p>
             <p>
-              A book's price converts to an{' '}
-              <span className="font-semibold text-text">implied probability</span> that
-              includes their margin — which is why the over and under add up to more than
-              100%. A raw comparison against that number therefore overstates any
-              disagreement, so the app shows the margin explicitly and refuses to compare
-              against a book pricing a different line than the one you entered.
+              Odds are presented as a plain list — on the{' '}
+              <span className="font-semibold text-text">Odds Board</span> for a whole game, and
+              on a player's page for that one stat. GridEdge deliberately does not compute an
+              "edge", score lines, or rank them by value. It shows what the books are offering
+              and what the player has actually done, and leaves the judgement to you.
             </p>
             <p>
-              A gap between the model and a book is a disagreement, not an edge. Books price
-              in injuries, weather, game script and late news that this model never sees, and
-              they are right far more often than a public model is. Informational only.
+              That restraint is intentional. Books price in injuries, weather, game script and
+              late news that this model never sees, and they are right far more often than a
+              public model built on box-score aggregates is. A gap between the two is much more
+              likely to be information the model is missing than an opportunity. Informational
+              only — any decision, and all of the risk, is yours.
             </p>
           </div>
         </Card>

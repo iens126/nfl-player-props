@@ -193,3 +193,110 @@ if __name__ == '__main__':
             print(f"  ERROR {name}: {type(exc).__name__}: {exc}")
     print(f"\n{len(tests) - failures}/{len(tests)} passed")
     sys.exit(1 if failures else 0)
+
+
+# --------------------------------------------------------------------------
+# Board view - the browsing list
+# --------------------------------------------------------------------------
+
+def test_board_lists_every_player_in_the_game():
+    """One request covers the whole game, so every player should come back -
+    the board exists precisely so that credit isn't spent on a single player."""
+    get_patch, env_patch = _patched(SAMPLE_ODDS)
+    with get_patch, env_patch:
+        result = odds.board('evt1', 'receiving_yards')
+
+    assert result['status'] == 'ok'
+    names = [e['player'] for e in result['entries']]
+    assert 'Jaxon Smith-Njigba' in names
+    assert 'Cooper Kupp' in names
+
+
+def test_board_is_ordered_by_line_descending():
+    get_patch, env_patch = _patched(SAMPLE_ODDS)
+    with get_patch, env_patch:
+        entries = odds.board('evt1', 'receiving_yards')['entries']
+
+    lines = [e['consensus_line'] for e in entries]
+    assert lines == sorted(lines, reverse=True)
+
+
+def test_board_consensus_line_is_the_median_across_books():
+    get_patch, env_patch = _patched(SAMPLE_ODDS)
+    with get_patch, env_patch:
+        entries = odds.board('evt1', 'receiving_yards')['entries']
+
+    jsn = next(e for e in entries if e['player'] == 'Jaxon Smith-Njigba')
+    # DraftKings 78.5 and FanDuel 80.5 -> 79.5
+    assert jsn['consensus_line'] == 79.5
+    assert len(jsn['books']) == 2
+
+
+def test_board_keeps_a_player_priced_by_only_one_book():
+    get_patch, env_patch = _patched(SAMPLE_ODDS)
+    with get_patch, env_patch:
+        entries = odds.board('evt1', 'receiving_yards')['entries']
+
+    kupp = next(e for e in entries if e['player'] == 'Cooper Kupp')
+    assert kupp['consensus_line'] == 45.5
+    assert kupp['books'][0]['under_price'] is None  # only an over was posted
+
+
+def test_board_and_player_panel_share_one_cached_request():
+    """Opening a player after browsing the board must not cost a second credit."""
+    odds.clear_cache()
+    calls = []
+
+    def fake_get(path, params):
+        calls.append(path)
+        if path.endswith('/events'):
+            return SAMPLE_EVENTS, '480'
+        return SAMPLE_ODDS, '479'
+
+    with mock.patch.object(odds, '_get', side_effect=fake_get), \
+         mock.patch.dict(odds.os.environ, {odds.ODDS_API_KEY_ENV: 'test-key'}):
+        odds.board('evt1', 'receiving_yards')
+        odds.player_prop('Jaxon Smith-Njigba', 'SEA', 'NE', 'receiving_yards')
+
+    billed = [c for c in calls if not c.endswith('/events')]
+    assert len(billed) == 1, f"expected one billed request, got {len(billed)}"
+
+
+def test_board_without_a_key_degrades():
+    odds.clear_cache()
+    with mock.patch.dict(odds.os.environ, {odds.ODDS_API_KEY_ENV: ''}):
+        result = odds.board('evt1', 'receiving_yards')
+    assert result['status'] == 'not_configured'
+    assert result['entries'] == []
+
+
+def test_board_reports_unsupported_stat():
+    get_patch, env_patch = _patched(SAMPLE_ODDS)
+    with get_patch, env_patch:
+        result = odds.board('evt1', 'not_a_real_stat')
+    assert result['status'] == 'no_market'
+
+
+def test_board_with_no_lines_posted_explains_why():
+    get_patch, env_patch = _patched({'home_team': 'A', 'away_team': 'B', 'bookmakers': []})
+    with get_patch, env_patch:
+        result = odds.board('evt1', 'receiving_yards')
+    assert result['status'] == 'no_market'
+    assert 'kickoff' in result['message']
+
+
+def test_upcoming_games_lists_and_sorts_events():
+    get_patch, env_patch = _patched(SAMPLE_ODDS)
+    with get_patch, env_patch:
+        result = odds.upcoming_games()
+    assert result['status'] == 'ok'
+    assert result['games'][0]['id'] == 'evt1'
+    assert result['games'][0]['home_team'] == 'Seattle Seahawks'
+
+
+def test_upcoming_games_without_a_key_degrades():
+    odds.clear_cache()
+    with mock.patch.dict(odds.os.environ, {odds.ODDS_API_KEY_ENV: ''}):
+        result = odds.upcoming_games()
+    assert result['status'] == 'not_configured'
+    assert result['games'] == []

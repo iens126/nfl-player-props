@@ -6,6 +6,7 @@ import { useTheme } from '../../lib/theme'
 
 const LINKS = [
   { to: '/', label: 'Dashboard' },
+  { to: '/odds', label: 'Odds Board' },
   { to: '/methodology', label: 'Methodology' },
 ]
 

@@ -1,8 +1,10 @@
-"""Live sportsbook lines from The Odds API, for comparison against the model.
+"""Live sportsbook lines from The Odds API.
 
-The point of this is comparison, not tailing: a book's line is the market's
-estimate of the same quantity the model estimates, so the interesting number is
-the gap between them. That gap is what the API returns alongside the raw prices.
+This is a browsing surface, not a bet recommender. It lists what the books are
+currently offering so someone can spot a line worth a closer look and then go
+read that player's history and projection. Nothing here scores, ranks, or
+flags a line as good value - the user brings their own judgement and carries
+all the risk.
 
 Requires an API key in ODDS_API_KEY (https://the-odds-api.com - the free tier
 is 500 credits/month). With no key configured, every call here returns a result
@@ -10,9 +12,10 @@ that says so rather than raising, so the rest of the app keeps working and the
 UI can explain what's missing.
 
 Credit discipline matters: player props are billed per event *per market*, so a
-handful of page loads can burn a month of free quota. Responses are therefore
-cached for ODDS_CACHE_MINUTES (default 10) and only the single market the user
-is actually looking at is ever requested.
+handful of page loads can burn a month of free quota. Responses are cached for
+ODDS_CACHE_MINUTES (default 10), and because one request returns every player
+in that game for that market, the whole board is served from the same single
+credit that one player lookup would have cost.
 """
 
 from __future__ import annotations
@@ -130,12 +133,174 @@ def _american_to_implied(price) -> float | None:
     return -price / (-price + 100.0) if price < 0 else 100.0 / (price + 100.0)
 
 
-def player_prop(player: str, team: str, opponent: str, stat: str) -> dict:
-    """Live over/under lines for one player and stat across the major books.
+def upcoming_games() -> dict:
+    """Games the books currently have listed, to choose a board from.
 
-    Returns a dict that always has a `status` field, so the caller can render
-    the reason for an empty result rather than a blank panel:
-    `ok`, `not_configured`, `no_market`, `no_event`, or `error`.
+    Listing events is not billed against the props quota, so this is safe to
+    call on every page load.
+    """
+    if not is_configured():
+        return {
+            'status': 'not_configured',
+            'message': 'Live odds need an ODDS_API_KEY. Get a free key at the-odds-api.com.',
+            'games': [],
+        }
+    try:
+        events = list_events()
+    except urllib.error.HTTPError as exc:
+        return {'status': 'error', 'message': _http_message(exc), 'games': []}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Odds event listing failed: %s", exc)
+        return {'status': 'error', 'message': 'Could not reach the odds provider.', 'games': []}
+
+    games = [
+        {
+            'id': event.get('id'),
+            'home_team': event.get('home_team'),
+            'away_team': event.get('away_team'),
+            'commence_time': event.get('commence_time'),
+        }
+        for event in events
+        if event.get('id')
+    ]
+    games.sort(key=lambda g: g['commence_time'] or '')
+    return {'status': 'ok', 'games': games}
+
+
+def _http_message(exc: urllib.error.HTTPError) -> str:
+    if exc.code in (401, 403):
+        return 'Invalid or expired API key.'
+    if exc.code == 429:
+        return 'Odds API quota exhausted for this billing period.'
+    return f'Odds API error ({exc.code}).'
+
+
+def _fetch_market(event_id: str, market: str):
+    """One event's prices for one market. This is the billed call - 1 credit."""
+    def _load():
+        return _get(
+            f"/sports/{SPORT}/events/{event_id}/odds",
+            {'regions': 'us', 'markets': market, 'oddsFormat': 'american',
+             'bookmakers': DEFAULT_BOOKMAKERS},
+        )
+    return _cached(f"props:{event_id}:{market}", _load)
+
+
+def _collect_players(payload: dict, market: str) -> dict[str, list[dict]]:
+    """Regroup the API's book-major response into player -> that player's prices."""
+    by_player: dict[str, list[dict]] = {}
+
+    for bookmaker in payload.get('bookmakers', []):
+        for market_data in bookmaker.get('markets', []):
+            if market_data.get('key') != market:
+                continue
+
+            # Player props carry the player's name in `description`, with the
+            # over and under arriving as two separate outcomes.
+            sides: dict[str, dict] = {}
+            for outcome in market_data.get('outcomes', []):
+                name = (outcome.get('description') or '').strip()
+                if not name:
+                    continue
+                side = (outcome.get('name') or '').lower()
+                if side not in ('over', 'under'):
+                    continue
+                sides.setdefault(name, {})[side] = outcome
+
+            for name, pair in sides.items():
+                over, under = pair.get('over'), pair.get('under')
+                reference = over or under
+                by_player.setdefault(name, []).append({
+                    'book': bookmaker.get('title', bookmaker.get('key')),
+                    'line': reference.get('point'),
+                    'over_price': over.get('price') if over else None,
+                    'under_price': under.get('price') if under else None,
+                    'implied_over': _american_to_implied(over.get('price')) if over else None,
+                    'implied_under': _american_to_implied(under.get('price')) if under else None,
+                    'last_update': market_data.get('last_update'),
+                })
+
+    return by_player
+
+
+def _consensus_line(books: list[dict]) -> float | None:
+    """The median line across books - just a summary number for the list view."""
+    points = sorted(b['line'] for b in books if b.get('line') is not None)
+    if not points:
+        return None
+    mid = len(points) // 2
+    return points[mid] if len(points) % 2 else (points[mid - 1] + points[mid]) / 2
+
+
+def board(event_id: str, stat: str) -> dict:
+    """Every player's line for one stat in one game.
+
+    This is the browsing view: a plain list of what the books are offering, so
+    a user can scan it, pick something that looks interesting to them, and go
+    read the history behind it.
+    """
+    if not is_configured():
+        return {
+            'status': 'not_configured',
+            'message': 'Live odds need an ODDS_API_KEY. Get a free key at the-odds-api.com.',
+            'entries': [],
+        }
+
+    market = MARKET_BY_STAT.get(stat)
+    if market is None:
+        return {'status': 'no_market', 'message': f'No sportsbook market for {stat}.', 'entries': []}
+
+    try:
+        payload, remaining = _fetch_market(event_id, market)
+    except urllib.error.HTTPError as exc:
+        logger.warning("Odds API HTTP %s for event %s / %s", exc.code, event_id, market)
+        return {'status': 'error', 'message': _http_message(exc), 'entries': []}
+    except Exception as exc:  # noqa: BLE001 - odds are a nice-to-have, never fatal
+        logger.warning("Odds board failed for %s/%s: %s", event_id, stat, exc)
+        return {'status': 'error', 'message': 'Could not reach the odds provider.', 'entries': []}
+
+    by_player = _collect_players(payload, market)
+    if not by_player:
+        return {
+            'status': 'no_market',
+            'message': f'No {stat.replace("_", " ")} lines posted for this game yet. '
+                       'Player props usually appear within a day or two of kickoff.',
+            'entries': [],
+        }
+
+    entries = [
+        {
+            'player': name,
+            'consensus_line': _consensus_line(books),
+            'books': sorted(books, key=lambda b: b['book']),
+        }
+        for name, books in by_player.items()
+    ]
+    # Highest lines first: that is usually the workload order (a team's WR1
+    # above its WR3), which is the most natural way to scan a game.
+    entries.sort(key=lambda e: (e['consensus_line'] is None, -(e['consensus_line'] or 0), e['player']))
+
+    return {
+        'status': 'ok',
+        'entries': entries,
+        'game': {
+            'id': event_id,
+            'home_team': payload.get('home_team'),
+            'away_team': payload.get('away_team'),
+            'commence_time': payload.get('commence_time'),
+        },
+        'market': market,
+        'stat': stat,
+        'requests_remaining': remaining,
+        'fetched_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+    }
+
+
+def player_prop(player: str, team: str, opponent: str, stat: str) -> dict:
+    """The lines for one player, for the panel on their analysis page.
+
+    Served from the same cached event response the board uses, so opening a
+    player after browsing the board costs nothing extra.
     """
     if not is_configured():
         return {
@@ -156,50 +321,19 @@ def player_prop(player: str, team: str, opponent: str, stat: str) -> dict:
                 'message': f'No upcoming {team} vs {opponent} game listed by the books.',
                 'books': [],
             }
-
-        def _load():
-            return _get(
-                f"/sports/{SPORT}/events/{event['id']}/odds",
-                {'regions': 'us', 'markets': market, 'oddsFormat': 'american',
-                 'bookmakers': DEFAULT_BOOKMAKERS},
-            )
-
-        payload, remaining = _cached(f"props:{event['id']}:{market}", _load)
+        payload, remaining = _fetch_market(event['id'], market)
     except urllib.error.HTTPError as exc:
-        detail = 'Invalid or expired API key.' if exc.code in (401, 403) else (
-            'Odds API quota exhausted.' if exc.code == 429 else f'Odds API error ({exc.code}).')
         logger.warning("Odds API HTTP %s for %s/%s", exc.code, player, stat)
-        return {'status': 'error', 'message': detail, 'books': []}
-    except Exception as exc:  # noqa: BLE001 - odds are a nice-to-have, never fatal
+        return {'status': 'error', 'message': _http_message(exc), 'books': []}
+    except Exception as exc:  # noqa: BLE001
         logger.warning("Odds lookup failed for %s/%s: %s", player, stat, exc)
         return {'status': 'error', 'message': 'Could not reach the odds provider.', 'books': []}
 
-    books = []
-    for bookmaker in payload.get('bookmakers', []):
-        for market_data in bookmaker.get('markets', []):
-            if market_data.get('key') != market:
-                continue
-            over = under = None
-            for outcome in market_data.get('outcomes', []):
-                # Player props carry the player's name in `description`.
-                if (outcome.get('description') or '').strip().lower() != player.strip().lower():
-                    continue
-                if (outcome.get('name') or '').lower() == 'over':
-                    over = outcome
-                elif (outcome.get('name') or '').lower() == 'under':
-                    under = outcome
-            if over is None and under is None:
-                continue
-            reference = over or under
-            books.append({
-                'book': bookmaker.get('title', bookmaker.get('key')),
-                'line': reference.get('point'),
-                'over_price': over.get('price') if over else None,
-                'under_price': under.get('price') if under else None,
-                'implied_over': _american_to_implied(over.get('price')) if over else None,
-                'implied_under': _american_to_implied(under.get('price')) if under else None,
-                'last_update': market_data.get('last_update'),
-            })
+    by_player = _collect_players(payload, market)
+    books = next(
+        (v for k, v in by_player.items() if k.strip().lower() == player.strip().lower()),
+        [],
+    )
 
     if not books:
         return {
@@ -211,6 +345,7 @@ def player_prop(player: str, team: str, opponent: str, stat: str) -> dict:
     return {
         'status': 'ok',
         'books': sorted(books, key=lambda b: b['book']),
+        'consensus_line': _consensus_line(books),
         'event': {
             'home_team': payload.get('home_team'),
             'away_team': payload.get('away_team'),

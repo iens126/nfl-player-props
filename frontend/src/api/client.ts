@@ -5,6 +5,8 @@ import {
   type GameLogResponse,
   type ModelInfo,
   type OddsResponse,
+  type OddsGamesResponse,
+  type OddsBoardResponse,
   type PlayerListItem,
   type PlayerSummary,
   type ProjectionRequest,
@@ -86,6 +88,11 @@ export const api = {
   defense: (team: string) => request<DefenseSummary>(`/api/defense/${encodeURIComponent(team)}`),
   projection: (body: ProjectionRequest) =>
     request<ProjectionResponse>('/api/projection', { method: 'POST', body: JSON.stringify(body) }),
+  oddsGames: () => request<OddsGamesResponse>('/api/odds/games'),
+  oddsBoard: (eventId: string, stat: string) => {
+    const qs = new URLSearchParams({ event_id: eventId, stat })
+    return request<OddsBoardResponse>(`/api/odds/board?${qs.toString()}`)
+  },
   scheduleUpcoming: (days = 7) => request<ScheduleGame[]>(`/api/schedule/upcoming?days=${days}`),
 }
 

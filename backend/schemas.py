@@ -164,7 +164,38 @@ class OddsResponse(BaseModel):
     status: str
     message: Optional[str] = None
     books: list[BookLine] = []
+    consensus_line: Optional[float] = None
     market: Optional[str] = None
+    fetched_at: Optional[str] = None
+    requests_remaining: Optional[str] = None
+
+
+class OddsGame(BaseModel):
+    id: str
+    home_team: Optional[str] = None
+    away_team: Optional[str] = None
+    commence_time: Optional[str] = None
+
+
+class OddsGamesResponse(BaseModel):
+    status: str
+    message: Optional[str] = None
+    games: list[OddsGame] = []
+
+
+class OddsBoardEntry(BaseModel):
+    player: str
+    consensus_line: Optional[float] = None
+    books: list[BookLine] = []
+
+
+class OddsBoardResponse(BaseModel):
+    status: str
+    message: Optional[str] = None
+    entries: list[OddsBoardEntry] = []
+    game: Optional[OddsGame] = None
+    market: Optional[str] = None
+    stat: Optional[str] = None
     fetched_at: Optional[str] = None
     requests_remaining: Optional[str] = None
 
