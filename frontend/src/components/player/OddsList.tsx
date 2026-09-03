@@ -1,6 +1,8 @@
 import { ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline'
 import type { OddsResponse } from '../../api/types'
 import { OddsFreshness } from './OddsFreshness'
+import { BookSwatch } from './BookSwatch'
+import { useTheme } from '../../lib/theme'
 
 function formatPrice(price: number | null) {
   if (price === null || price === undefined) return '—'
@@ -16,6 +18,7 @@ function formatPrice(price: number | null) {
  * the reader's call.
  */
 export function OddsList({ odds, loading }: { odds: OddsResponse | null; loading: boolean }) {
+  const { theme } = useTheme()
   if (loading) {
     return (
       <div className="rounded-2xl border border-border bg-surface p-5">
@@ -71,7 +74,7 @@ export function OddsList({ odds, loading }: { odds: OddsResponse | null; loading
           <tbody>
             {odds.books.map((b) => (
               <tr key={b.book} className="border-b border-border/60 last:border-0">
-                <td className="px-1 py-2.5 font-semibold text-text">{b.book}</td>
+                <td className="px-1 py-2.5"><BookSwatch book={b.book} isDark={theme === 'dark'} /></td>
                 <td className="px-1 py-2.5 text-right tabular text-text">{b.line ?? '—'}</td>
                 <td className="px-1 py-2.5 text-right tabular text-text-muted">{formatPrice(b.over_price)}</td>
                 <td className="px-1 py-2.5 text-right tabular text-text-muted">{formatPrice(b.under_price)}</td>

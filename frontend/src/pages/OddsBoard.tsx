@@ -7,6 +7,8 @@ import { Card, SectionHeading } from '../components/common/Card'
 import { Skeleton } from '../components/common/Skeleton'
 import { ErrorState } from '../components/common/ErrorState'
 import { OddsFreshness } from '../components/player/OddsFreshness'
+import { bookStyle } from '../lib/bookStyle'
+import { useTheme } from '../lib/theme'
 import { statLabel } from '../lib/statLabels'
 import type { BookLine, OddsBoardEntry } from '../api/types'
 
@@ -42,6 +44,8 @@ function formatKickoff(iso: string | null) {
  */
 export default function OddsBoard() {
   const navigate = useNavigate()
+  const { theme } = useTheme()
+  const isDark = theme === 'dark'
   const [stat, setStat] = useState('receiving_yards')
   const [eventId, setEventId] = useState<string | null>(null)
 
@@ -183,7 +187,19 @@ export default function OddsBoard() {
                       <th className="px-5 py-2.5 font-semibold sm:px-6">Player</th>
                       <th className="px-3 py-2.5 text-right font-semibold">Line</th>
                       {bookNames.map((b) => (
-                        <th key={b} className="px-3 py-2.5 text-right font-semibold">{b}</th>
+                        <th key={b} className="px-3 py-2.5 text-right font-semibold">
+                          <span
+                            className="inline-flex items-center gap-1.5"
+                            style={{ color: bookStyle(b, isDark).color }}
+                          >
+                            <span
+                              aria-hidden="true"
+                              className="inline-block h-2 w-2 rounded-sm"
+                              style={{ background: bookStyle(b, isDark).color }}
+                            />
+                            {b}
+                          </span>
+                        </th>
                       ))}
                       <th className="px-5 py-2.5 sm:px-6" />
                     </tr>
@@ -194,6 +210,7 @@ export default function OddsBoard() {
                         key={entry.player}
                         entry={entry}
                         bookNames={bookNames}
+                        isDark={isDark}
                         onOpen={() => openPlayer(entry)}
                       />
                     ))}
@@ -227,10 +244,12 @@ export default function OddsBoard() {
 function BoardRow({
   entry,
   bookNames,
+  isDark,
   onOpen,
 }: {
   entry: OddsBoardEntry
   bookNames: string[]
+  isDark: boolean
   onOpen: () => void
 }) {
   const byBook = new Map<string, BookLine>(entry.books.map((b) => [b.book, b]))
@@ -258,7 +277,12 @@ function BoardRow({
           <td key={name} className="px-3 py-3 text-right tabular text-xs text-text-muted">
             {b ? (
               <>
-                <span className="block font-semibold text-text">{b.line ?? '—'}</span>
+                <span
+                  className="block font-semibold"
+                  style={{ color: bookStyle(name, isDark).color }}
+                >
+                  {b.line ?? '—'}
+                </span>
                 <span className="block text-[11px]">
                   {formatPrice(b.over_price)} / {formatPrice(b.under_price)}
                 </span>

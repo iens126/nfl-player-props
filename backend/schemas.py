@@ -165,7 +165,34 @@ class OddsResponse(BaseModel):
     message: Optional[str] = None
     books: list[BookLine] = []
     consensus_line: Optional[float] = None
+    # Carried so the client can request this game's alternate ladder without
+    # re-resolving the matchup. response_model filters unknown fields, so
+    # omitting it here silently dropped it from the payload.
+    event_id: Optional[str] = None
     market: Optional[str] = None
+    fetched_at: Optional[str] = None
+    requests_remaining: Optional[str] = None
+
+
+class AlternateBookPrice(BaseModel):
+    book: str
+    over_price: Optional[float] = None
+    under_price: Optional[float] = None
+
+
+class AlternateLine(BaseModel):
+    line: float
+    books: list[AlternateBookPrice] = []
+    best_over: Optional[float] = None
+    best_under: Optional[float] = None
+
+
+class AlternatesResponse(BaseModel):
+    status: str
+    message: Optional[str] = None
+    player: Optional[str] = None
+    stat: Optional[str] = None
+    lines: list[AlternateLine] = []
     fetched_at: Optional[str] = None
     requests_remaining: Optional[str] = None
 

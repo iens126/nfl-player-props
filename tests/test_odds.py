@@ -322,3 +322,113 @@ def test_every_abbreviation_round_trips_through_the_reverse_map():
         assert resolved is not None
         # LA/LAR share a name, so accept either spelling of the Rams.
         assert odds.TEAM_NAMES[resolved] == full, f"{abbr} -> {full} -> {resolved}"
+
+
+# --------------------------------------------------------------------------
+# Alternate lines - the ladder behind the line/price explorer
+# --------------------------------------------------------------------------
+
+SAMPLE_ALTERNATES = {
+    'id': 'evt1',
+    'home_team': 'Seattle Seahawks',
+    'away_team': 'New England Patriots',
+    'bookmakers': [
+        {
+            'key': 'draftkings', 'title': 'DraftKings',
+            'markets': [{
+                'key': 'player_reception_yds_alternate', 'last_update': '2026-09-14T18:00:00Z',
+                'outcomes': [
+                    {'name': 'Over', 'description': 'Jaxon Smith-Njigba', 'price': -320, 'point': 40.5},
+                    {'name': 'Over', 'description': 'Jaxon Smith-Njigba', 'price': -115, 'point': 70.5},
+                    {'name': 'Under', 'description': 'Jaxon Smith-Njigba', 'price': -105, 'point': 70.5},
+                    {'name': 'Over', 'description': 'Jaxon Smith-Njigba', 'price': 260, 'point': 100.5},
+                    {'name': 'Over', 'description': 'Cooper Kupp', 'price': -140, 'point': 40.5},
+                ],
+            }],
+        },
+        {
+            'key': 'fanduel', 'title': 'FanDuel',
+            'markets': [{
+                'key': 'player_reception_yds_alternate', 'last_update': '2026-09-14T18:01:00Z',
+                'outcomes': [
+                    {'name': 'Over', 'description': 'Jaxon Smith-Njigba', 'price': -300, 'point': 40.5},
+                    {'name': 'Over', 'description': 'Jaxon Smith-Njigba', 'price': 275, 'point': 100.5},
+                ],
+            }],
+        },
+    ],
+}
+
+
+def test_alternates_return_a_ladder_sorted_by_line():
+    get_patch, env_patch = _patched(SAMPLE_ALTERNATES)
+    with get_patch, env_patch:
+        result = odds.alternate_lines('evt1', 'receiving_yards', 'Jaxon Smith-Njigba')
+
+    assert result['status'] == 'ok'
+    points = [row['line'] for row in result['lines']]
+    assert points == sorted(points)
+    assert points == [40.5, 70.5, 100.5]
+
+
+def test_alternates_only_include_the_requested_player():
+    get_patch, env_patch = _patched(SAMPLE_ALTERNATES)
+    with get_patch, env_patch:
+        result = odds.alternate_lines('evt1', 'receiving_yards', 'Jaxon Smith-Njigba')
+
+    for row in result['lines']:
+        for book in row['books']:
+            assert 'over_price' in book
+    # Cooper Kupp also has a 40.5 line; it must not appear in JSN's ladder.
+    forty = next(r for r in result['lines'] if r['line'] == 40.5)
+    assert len(forty['books']) == 2  # DraftKings and FanDuel, not Kupp's row
+
+
+def test_alternates_pick_the_best_price_across_books():
+    get_patch, env_patch = _patched(SAMPLE_ALTERNATES)
+    with get_patch, env_patch:
+        rows = odds.alternate_lines('evt1', 'receiving_yards', 'Jaxon Smith-Njigba')['lines']
+
+    # -300 is a better price for the bettor than -320.
+    assert next(r for r in rows if r['line'] == 40.5)['best_over'] == -300
+    # +275 pays more than +260.
+    assert next(r for r in rows if r['line'] == 100.5)['best_over'] == 275
+
+
+def test_alternates_pair_over_and_under_on_the_same_line():
+    get_patch, env_patch = _patched(SAMPLE_ALTERNATES)
+    with get_patch, env_patch:
+        rows = odds.alternate_lines('evt1', 'receiving_yards', 'Jaxon Smith-Njigba')['lines']
+
+    seventy = next(r for r in rows if r['line'] == 70.5)
+    dk = next(b for b in seventy['books'] if b['book'] == 'DraftKings')
+    assert dk['over_price'] == -115
+    assert dk['under_price'] == -105
+
+
+def test_alternates_report_stats_without_an_alternate_market():
+    get_patch, env_patch = _patched(SAMPLE_ALTERNATES)
+    with get_patch, env_patch:
+        result = odds.alternate_lines('evt1', 'targets', 'Anyone')
+    assert result['status'] == 'no_market'
+    assert 'alternate' in result['message']
+
+
+def test_alternates_for_an_unlisted_player():
+    get_patch, env_patch = _patched(SAMPLE_ALTERNATES)
+    with get_patch, env_patch:
+        result = odds.alternate_lines('evt1', 'receiving_yards', 'Nobody At All')
+    assert result['status'] == 'no_market'
+    assert result['lines'] == []
+
+
+def test_alternates_without_a_key_degrade():
+    odds.clear_cache()
+    with mock.patch.dict(odds.os.environ, {odds.ODDS_API_KEY_ENV: ''}):
+        result = odds.alternate_lines('evt1', 'receiving_yards', 'Anyone')
+    assert result['status'] == 'not_configured'
+
+
+def test_every_alternate_market_has_a_standard_counterpart():
+    for stat in odds.ALTERNATE_MARKET_BY_STAT:
+        assert stat in odds.MARKET_BY_STAT, f"{stat} has no standard market"

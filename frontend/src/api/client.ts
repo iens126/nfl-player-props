@@ -7,6 +7,7 @@ import {
   type OddsResponse,
   type OddsGamesResponse,
   type OddsBoardResponse,
+  type AlternatesResponse,
   type PlayerListItem,
   type PlayerSummary,
   type ProjectionRequest,
@@ -208,12 +209,54 @@ export const api = {
     }
   },
 
+  /**
+   * The model's P(over) at each of several lines, in one pass.
+   *
+   * The models are closed-form, so pricing a whole ladder of thresholds costs
+   * microseconds — which is what makes the line explorer's slider feel instant
+   * instead of firing a request per step.
+   */
+  probabilitiesFor: async (
+    body: Omit<ProjectionRequest, 'line'> & { lines: number[] },
+  ): Promise<Record<number, number>> => {
+    const [file, aggregates, models] = await Promise.all([
+      fromBundle(() => loadPlayer(body.player), `No data found for player '${body.player}'`),
+      fromBundle(() => bundle.aggregates()),
+      fromBundle(() => bundle.models()),
+    ])
+    const out: Record<number, number> = {}
+    for (const line of body.lines) {
+      try {
+        out[line] = project({
+          player: body.player,
+          opponent: body.opponent.toUpperCase(),
+          stat: body.stat,
+          line,
+          model: body.model ?? 'ensemble',
+          games: file.games,
+          aggregates,
+          models,
+        }).prob_over
+      } catch {
+        // A line the model can't price just has no reading.
+      }
+    }
+    return out
+  },
+
   // --- live odds: the only thing still served by a function ---
   odds: (params: { player: string; team: string; opponent: string; stat: string }) => {
     const qs = new URLSearchParams(params)
     return request<OddsResponse>(`/api/odds?${qs.toString()}`)
   },
   oddsGames: () => request<OddsGamesResponse>('/api/odds/games'),
+
+  /** The full line/price ladder for one player. Costs an extra API credit, so
+   *  this is only called when a user explicitly opens the explorer. */
+  oddsAlternates: (eventId: string, stat: string, player: string) => {
+    const qs = new URLSearchParams({ event_id: eventId, stat, player })
+    return request<AlternatesResponse>(`/api/odds/alternates?${qs.toString()}`)
+  },
 
   oddsBoard: async (eventId: string, stat: string): Promise<OddsBoardResponse> => {
     const qs = new URLSearchParams({ event_id: eventId, stat })

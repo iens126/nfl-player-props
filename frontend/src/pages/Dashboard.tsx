@@ -20,11 +20,12 @@ import { HowItWorks } from '../components/layout/HowItWorks'
 import { ModelConsensus } from '../components/player/ModelConsensus'
 import { HitRatePanel } from '../components/player/HitRatePanel'
 import { OddsList } from '../components/player/OddsList'
+import { LineExplorer } from '../components/player/LineExplorer'
 import { ModelInfoPanel } from '../components/player/ModelInfoPanel'
 import { statLabel } from '../lib/statLabels'
 import { matchupColors } from '../lib/teamColors'
 import { useTheme } from '../lib/theme'
-import type { ModelKey, OddsResponse, ProjectionResponse } from '../api/types'
+import type { AlternatesResponse, ModelKey, OddsResponse, ProjectionResponse } from '../api/types'
 
 const PASS_TYPE_STATS = new Set([
   'passing_yards', 'passing_tds', 'completions', 'attempts', 'passing_interceptions',
@@ -182,6 +183,55 @@ export default function Dashboard() {
     }
   }, [player, opponent, stat, summary.data?.team])
 
+  // The alternate-line ladder costs an extra API credit, so it is only
+  // fetched when the user asks for it, and reset whenever the matchup changes.
+  const [alternates, setAlternates] = useState<{
+    data: AlternatesResponse | null
+    loading: boolean
+    requested: boolean
+    probabilities: Record<number, number>
+  }>({ data: null, loading: false, requested: false, probabilities: {} })
+
+  useEffect(() => {
+    setAlternates({ data: null, loading: false, requested: false, probabilities: {} })
+  }, [player, opponent, stat])
+
+  async function loadAlternates() {
+    const eventId = odds.data?.event_id
+    if (!player || !stat || !eventId) {
+      setAlternates({
+        data: {
+          status: 'no_event',
+          message: 'The books have no game listed for this matchup yet.',
+          player, stat, lines: [], fetched_at: null, requests_remaining: null,
+        },
+        loading: false, requested: true, probabilities: {},
+      })
+      return
+    }
+
+    setAlternates((a) => ({ ...a, loading: true, requested: true }))
+    try {
+      const data = await api.oddsAlternates(eventId, stat, player)
+      // Price every rung locally in one pass so the slider doesn't refetch.
+      let probabilities: Record<number, number> = {}
+      if (data.status === 'ok' && opponent && data.lines.length) {
+        probabilities = await api.probabilitiesFor({
+          player, opponent, stat, model, lines: data.lines.map((l) => l.line),
+        })
+      }
+      setAlternates({ data, loading: false, requested: true, probabilities })
+    } catch {
+      setAlternates({
+        data: {
+          status: 'error', message: 'Could not load the alternate lines.',
+          player, stat, lines: [], fetched_at: null, requests_remaining: null,
+        },
+        loading: false, requested: true, probabilities: {},
+      })
+    }
+  }
+
   const activeModelInfo = (models.data ?? []).find((m) => m.key === model) ?? null
 
   const positionItems: SelectItem[] = (positions.data ?? []).map((p) => ({ value: p, label: p }))
@@ -320,6 +370,13 @@ export default function Dashboard() {
                       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
                         <HitRatePanel result={projection.data} />
                         <OddsList odds={odds.data} loading={odds.loading} />
+                        <LineExplorer
+                          alternates={alternates.data}
+                          loading={alternates.loading}
+                          requested={alternates.requested}
+                          onRequest={loadAlternates}
+                          onProbabilityFor={(line) => alternates.probabilities[line] ?? null}
+                        />
                         <ModelInfoPanel info={activeModelInfo} />
                       </div>
                     </div>

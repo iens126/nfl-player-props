@@ -53,6 +53,22 @@ MARKET_BY_STAT = {
     'rushing_tds': 'player_rush_tds',
 }
 
+# Alternate markets carry the "X+" milestone ladder: the same player at several
+# thresholds, each with its own price, which is what makes a line/price explorer
+# possible. Not every stat has one, and coverage is thinner than the main line.
+#
+# These are billed separately - cost is markets x regions - so an alternate
+# lookup is a second credit on top of the main line for that game. Nothing
+# fetches them automatically; the UI asks only when a user opens the ladder.
+ALTERNATE_MARKET_BY_STAT = {
+    'passing_yards': 'player_pass_yds_alternate',
+    'passing_tds': 'player_pass_tds_alternate',
+    'receiving_yards': 'player_reception_yds_alternate',
+    'receptions': 'player_receptions_alternate',
+    'rushing_yards': 'player_rush_yds_alternate',
+    'rushing_tds': 'player_rush_tds_alternate',
+}
+
 # The Odds API identifies teams by full name; we work in nflverse abbreviations.
 TEAM_NAMES = {
     'ARI': 'Arizona Cardinals', 'ATL': 'Atlanta Falcons', 'BAL': 'Baltimore Ravens',
@@ -361,6 +377,9 @@ def player_prop(player: str, team: str, opponent: str, stat: str) -> dict:
         'status': 'ok',
         'books': sorted(books, key=lambda b: b['book']),
         'consensus_line': _consensus_line(books),
+        # Carried so the caller can ask for this game's alternate ladder
+        # without re-resolving the matchup to an event.
+        'event_id': event['id'],
         'event': {
             'home_team': payload.get('home_team'),
             'away_team': payload.get('away_team'),
@@ -371,3 +390,99 @@ def player_prop(player: str, team: str, opponent: str, stat: str) -> dict:
         'fetched_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
         'books_count': len(books),
     }
+
+
+def alternate_lines(event_id: str, stat: str, player: str) -> dict:
+    """The full ladder of lines and prices for one player and stat.
+
+    Standard markets return a single line per book - the number the book
+    expects to split action on. Alternate markets return the milestone ladder
+    around it, so a receiver's 60.5 main line is accompanied by 40+, 50+, 70+
+    and so on, each priced accordingly. That is what lets someone explore the
+    trade-off between a softer line and a worse price.
+
+    Costs one extra credit per game/stat on top of the main line, so callers
+    should request it on demand rather than alongside the board.
+    """
+    if not is_configured():
+        return {
+            'status': 'not_configured',
+            'message': 'Live odds need an ODDS_API_KEY. Get a free key at the-odds-api.com.',
+            'lines': [],
+        }
+
+    market = ALTERNATE_MARKET_BY_STAT.get(stat)
+    if market is None:
+        return {
+            'status': 'no_market',
+            'message': f'The books do not publish alternate lines for {stat.replace("_", " ")}.',
+            'lines': [],
+        }
+
+    try:
+        payload, remaining = _fetch_market(event_id, market)
+    except urllib.error.HTTPError as exc:
+        logger.warning("Alternate odds HTTP %s for %s/%s", exc.code, event_id, market)
+        return {'status': 'error', 'message': _http_message(exc), 'lines': []}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Alternate odds failed for %s/%s: %s", event_id, stat, exc)
+        return {'status': 'error', 'message': 'Could not reach the odds provider.', 'lines': []}
+
+    wanted = player.strip().lower()
+    # line -> book -> prices. A book publishes many rows for one player here,
+    # one per threshold, so they group by line rather than collapsing per book.
+    by_line: dict[float, dict[str, dict]] = {}
+
+    for bookmaker in payload.get('bookmakers', []):
+        title = bookmaker.get('title', bookmaker.get('key'))
+        for market_data in bookmaker.get('markets', []):
+            if market_data.get('key') != market:
+                continue
+            for outcome in market_data.get('outcomes', []):
+                if (outcome.get('description') or '').strip().lower() != wanted:
+                    continue
+                point = outcome.get('point')
+                side = (outcome.get('name') or '').lower()
+                if point is None or side not in ('over', 'under'):
+                    continue
+                entry = by_line.setdefault(float(point), {}).setdefault(
+                    title, {'book': title, 'over_price': None, 'under_price': None},
+                )
+                entry[f'{side}_price'] = outcome.get('price')
+
+    if not by_line:
+        return {
+            'status': 'no_market',
+            'message': f'No alternate {stat.replace("_", " ")} lines posted for {player} yet.',
+            'lines': [],
+        }
+
+    lines = [
+        {
+            'line': point,
+            'books': sorted(books.values(), key=lambda b: b['book']),
+            'best_over': _best_price(books.values(), 'over_price'),
+            'best_under': _best_price(books.values(), 'under_price'),
+        }
+        for point, books in sorted(by_line.items())
+    ]
+
+    return {
+        'status': 'ok',
+        'player': player,
+        'stat': stat,
+        'market': market,
+        'lines': lines,
+        'requests_remaining': remaining,
+        'fetched_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+    }
+
+
+def _best_price(books, side: str):
+    """The most favourable American price across books for one side.
+
+    Higher is always better for the bettor: +150 pays more than +120, and -105
+    costs less than -130. On that scale the largest number wins either way.
+    """
+    prices = [b[side] for b in books if b.get(side) is not None]
+    return max(prices) if prices else None

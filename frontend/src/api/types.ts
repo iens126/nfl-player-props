@@ -143,6 +143,8 @@ export interface OddsResponse {
   message: string | null
   books: BookLine[]
   consensus_line: number | null
+  /** Present when a game matched; needed to request the alternate ladder. */
+  event_id?: string | null
   market: string | null
   fetched_at: string | null
   requests_remaining: string | null
@@ -159,6 +161,29 @@ export interface OddsGamesResponse {
   status: OddsStatus
   message: string | null
   games: OddsGame[]
+}
+
+export interface AlternateBookPrice {
+  book: string
+  over_price: number | null
+  under_price: number | null
+}
+
+export interface AlternateLine {
+  line: number
+  books: AlternateBookPrice[]
+  best_over: number | null
+  best_under: number | null
+}
+
+export interface AlternatesResponse {
+  status: OddsStatus
+  message: string | null
+  player: string | null
+  stat: string | null
+  lines: AlternateLine[]
+  fetched_at: string | null
+  requests_remaining: string | null
 }
 
 export interface OddsBoardEntry {

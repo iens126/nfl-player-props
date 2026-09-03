@@ -38,7 +38,7 @@ from backend.model_docs import MODEL_DOCS
 from backend.schemas import (
     TeamOut, PlayerListItem, PlayerSummary, StabilityStat, GameLogResponse,
     ChartResponse, DefenseSummaryOut, ProjectionRequest, ProjectionResponse,
-    OddsGamesResponse, OddsBoardResponse,
+    OddsGamesResponse, OddsBoardResponse, AlternatesResponse,
     ScheduleGame, ModelInfo, FeatureImportance, OddsResponse,
 )
 
@@ -219,6 +219,20 @@ def live_odds(
     degrades to a message instead of a broken panel.
     """
     return odds_api.player_prop(player, team.upper(), opponent.upper(), stat)
+
+
+@app.get("/api/odds/alternates", response_model=AlternatesResponse)
+def odds_alternates(
+    event_id: str = Query(..., min_length=1, max_length=64),
+    stat: str = Query(..., min_length=1, max_length=50),
+    player: str = Query(..., min_length=1, max_length=100),
+):
+    """The full line/price ladder for one player.
+
+    Mirrors the api/odds/alternates.py serverless function so local development
+    against this app behaves the same as production.
+    """
+    return odds_api.alternate_lines(event_id, stat, player)
 
 
 @app.get("/api/odds/games", response_model=OddsGamesResponse)
