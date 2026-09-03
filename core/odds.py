@@ -461,8 +461,6 @@ def alternate_lines(event_id: str, stat: str, player: str) -> dict:
         {
             'line': point,
             'books': sorted(books.values(), key=lambda b: b['book']),
-            'best_over': _best_price(books.values(), 'over_price'),
-            'best_under': _best_price(books.values(), 'under_price'),
         }
         for point, books in sorted(by_line.items())
     ]
@@ -476,13 +474,3 @@ def alternate_lines(event_id: str, stat: str, player: str) -> dict:
         'requests_remaining': remaining,
         'fetched_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
     }
-
-
-def _best_price(books, side: str):
-    """The most favourable American price across books for one side.
-
-    Higher is always better for the bettor: +150 pays more than +120, and -105
-    costs less than -130. On that scale the largest number wins either way.
-    """
-    prices = [b[side] for b in books if b.get(side) is not None]
-    return max(prices) if prices else None

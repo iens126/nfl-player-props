@@ -196,8 +196,26 @@ export default function Dashboard() {
     setAlternates({ data: null, loading: false, requested: false, probabilities: {} })
   }, [player, opponent, stat])
 
+  // The ladder is priced once when it loads, so changing the model afterwards
+  // would leave every rung describing the previous one. Re-price in place.
+  useEffect(() => {
+    const rungs = alternates.data?.lines
+    if (!player || !opponent || !stat || !rungs?.length) return
+    let cancelled = false
+    api
+      .probabilitiesFor({ player, opponent, stat, model, lines: rungs.map((l) => l.line) })
+      .then((probabilities) => {
+        if (!cancelled) setAlternates((a) => ({ ...a, probabilities }))
+      })
+      .catch(() => { /* the rungs simply show no model reading */ })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, alternates.data])
+
   async function loadAlternates() {
     const eventId = odds.data?.event_id
+    // The button is disabled while odds are pending, so reaching here without
+    // an event id means the books genuinely have no game for this matchup.
     if (!player || !stat || !eventId) {
       setAlternates({
         data: {
@@ -367,18 +385,27 @@ export default function Dashboard() {
                         <OverUnderPanel result={projection.data} />
                         <ModelConsensus result={projection.data} />
                       </div>
-                      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-                        <HitRatePanel result={projection.data} />
-                        <OddsList odds={odds.data} loading={odds.loading} />
-                        <LineExplorer
-                          alternates={alternates.data}
-                          loading={alternates.loading}
-                          requested={alternates.requested}
-                          onRequest={loadAlternates}
-                          onProbabilityFor={(line) => alternates.probabilities[line] ?? null}
-                        />
-                        <ModelInfoPanel info={activeModelInfo} />
-                      </div>
+                      <HitRatePanel result={projection.data} />
+                    </div>
+                  )}
+
+                  {/* The book panels and the model write-up don't depend on the
+                      projection, so they sit outside its loading gate. Inside
+                      it, every keystroke in the line field unmounted them:
+                      the odds flickered out and back, and the line explorer
+                      lost its slider position on each edit. */}
+                  {opponent && (
+                    <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
+                      <OddsList odds={odds.data} loading={odds.loading} />
+                      <LineExplorer
+                        alternates={alternates.data}
+                        loading={alternates.loading}
+                        oddsPending={odds.loading}
+                        requested={alternates.requested}
+                        onRequest={loadAlternates}
+                        onProbabilityFor={(line) => alternates.probabilities[line] ?? null}
+                      />
+                      <ModelInfoPanel info={activeModelInfo} />
                     </div>
                   )}
                 </div>

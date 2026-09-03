@@ -384,17 +384,6 @@ def test_alternates_only_include_the_requested_player():
     assert len(forty['books']) == 2  # DraftKings and FanDuel, not Kupp's row
 
 
-def test_alternates_pick_the_best_price_across_books():
-    get_patch, env_patch = _patched(SAMPLE_ALTERNATES)
-    with get_patch, env_patch:
-        rows = odds.alternate_lines('evt1', 'receiving_yards', 'Jaxon Smith-Njigba')['lines']
-
-    # -300 is a better price for the bettor than -320.
-    assert next(r for r in rows if r['line'] == 40.5)['best_over'] == -300
-    # +275 pays more than +260.
-    assert next(r for r in rows if r['line'] == 100.5)['best_over'] == 275
-
-
 def test_alternates_pair_over_and_under_on_the_same_line():
     get_patch, env_patch = _patched(SAMPLE_ALTERNATES)
     with get_patch, env_patch:

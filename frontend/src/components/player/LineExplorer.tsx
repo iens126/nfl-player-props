@@ -1,11 +1,10 @@
-import { useMemo, useState } from 'react'
-import clsx from 'clsx'
+import { useState } from 'react'
 import { ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline'
 import type { AlternateLine, AlternatesResponse } from '../../api/types'
-import { bookStyle } from '../../lib/bookStyle'
 import { statLabel } from '../../lib/statLabels'
 import { useTheme } from '../../lib/theme'
 import { BookSwatch } from './BookSwatch'
+import { OddsFreshness } from './OddsFreshness'
 
 /**
  * Explore the whole ladder of lines a book will price, not just the main one.
@@ -16,9 +15,9 @@ import { BookSwatch } from './BookSwatch'
  * Sliding through that ladder is the clearest way to see what you give up in
  * price for a softer number.
  *
- * The model's probability for the selected line is shown alongside, because it
- * costs nothing to compute in the browser. It is presented as a second opinion,
- * not as an edge: no gap is scored, ranked or flagged.
+ * Every book's price is shown as posted, with the probability it implies. No
+ * book is singled out as "best" and no gap against the model is scored: the
+ * point is to show what's on offer, not to pick for anyone.
  */
 
 function formatPrice(price: number | null): string {
@@ -32,15 +31,22 @@ function impliedProbability(price: number | null): number | null {
   return price < 0 ? -price / (-price + 100) : 100 / (price + 100)
 }
 
+function formatPercent(value: number | null): string {
+  return value === null ? '—' : `${(value * 100).toFixed(1)}%`
+}
+
 export function LineExplorer({
   alternates,
   loading,
+  oddsPending,
   onProbabilityFor,
   onRequest,
   requested,
 }: {
   alternates: AlternatesResponse | null
   loading: boolean
+  /** True while the main odds call is still resolving the game. */
+  oddsPending: boolean
   /** Model P(over) at an arbitrary line — closed-form, so this is cheap. */
   onProbabilityFor: (line: number) => number | null
   onRequest: () => void
@@ -48,14 +54,25 @@ export function LineExplorer({
 }) {
   const { theme } = useTheme()
   const isDark = theme === 'dark'
+
+  const lines: AlternateLine[] = alternates?.lines ?? []
+
+  // Reset the slider when a different ladder arrives. This component stays
+  // mounted across player and stat changes, so without it the slider kept the
+  // previous ladder's position — landing on an unrelated rung, or clamping to
+  // the end of a shorter ladder.
+  //
+  // Compare on the `alternates` prop, not on `lines`: the latter is
+  // `alternates?.lines ?? []`, a fresh array literal on every render whenever
+  // the prop is null, which makes the check always true and loops forever.
+  // The prop's identity only changes when the parent actually loads a ladder.
+  const [seen, setSeen] = useState<AlternatesResponse | null>(alternates)
   const [index, setIndex] = useState(0)
+  if (seen !== alternates) {
+    setSeen(alternates)
+    setIndex(0)
+  }
 
-  const lines: AlternateLine[] = useMemo(
-    () => alternates?.lines ?? [],
-    [alternates],
-  )
-
-  // Keep the slider in range when a new ladder arrives.
   const safeIndex = Math.min(index, Math.max(lines.length - 1, 0))
   const selected = lines[safeIndex]
 
@@ -73,9 +90,10 @@ export function LineExplorer({
         <button
           type="button"
           onClick={onRequest}
-          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent-soft transition-colors hover:bg-accent/15"
+          disabled={oddsPending}
+          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent-soft transition-colors hover:bg-accent/15 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Load alternate lines
+          {oddsPending ? 'Finding the game…' : 'Load alternate lines'}
         </button>
         <p className="mt-2 text-[11px] text-text-faint">
           Uses one API credit per game and stat, so it's loaded on request rather
@@ -116,8 +134,8 @@ export function LineExplorer({
     )
   }
 
-  const modelProbability = selected ? onProbabilityFor(selected.line) : null
-  const bookImplied = impliedProbability(selected?.best_over ?? null)
+  const modelProbability = onProbabilityFor(selected.line)
+  const singleRung = lines.length < 2
 
   return (
     <div className="rounded-2xl border border-border bg-surface p-5">
@@ -126,94 +144,88 @@ export function LineExplorer({
           Alternate lines
         </h3>
         <span className="text-xs text-text-faint">
-          {lines.length} thresholds · {alternates.stat ? statLabel(alternates.stat) : ''}
+          {lines.length} threshold{lines.length === 1 ? '' : 's'}
+          {alternates.stat ? ` · ${statLabel(alternates.stat)}` : ''}
         </span>
       </div>
 
-      {/* The ladder itself */}
-      <div className="mt-5">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-              Line
-            </p>
-            <p className="mt-0.5 text-3xl font-extrabold tabular tracking-tight text-text">
-              {selected.line}
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-              Best over price
-            </p>
-            <p className="mt-0.5 text-3xl font-extrabold tabular tracking-tight text-text">
-              {formatPrice(selected.best_over)}
-            </p>
-          </div>
+      <div className="mt-5 flex items-end justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-faint">Line</p>
+          <p className="mt-0.5 text-3xl font-extrabold tabular tracking-tight text-text">
+            {selected.line}
+          </p>
         </div>
-
-        <input
-          type="range"
-          min={0}
-          max={lines.length - 1}
-          step={1}
-          value={safeIndex}
-          onChange={(e) => setIndex(Number(e.target.value))}
-          aria-label="Alternate line"
-          className="mt-4 w-full accent-accent"
-        />
-        <div className="flex justify-between text-[11px] tabular text-text-faint">
-          <span>{lines[0].line}</span>
-          <span>{lines[lines.length - 1].line}</span>
+        <div className="text-right">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-text-faint">
+            Model says over
+          </p>
+          <p className="mt-0.5 text-3xl font-extrabold tabular tracking-tight text-text">
+            {formatPercent(modelProbability)}
+          </p>
         </div>
       </div>
 
-      {/* What the two readings say at this threshold */}
-      <div className="mt-5 grid grid-cols-2 gap-3">
-        <div className="rounded-xl border border-border bg-surface-2 p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-text-faint">
-            Book implied
-          </p>
-          <p className="mt-1 text-xl font-bold tabular text-text">
-            {bookImplied === null ? '—' : `${(bookImplied * 100).toFixed(1)}%`}
-          </p>
-          <p className="mt-0.5 text-[10px] leading-tight text-text-faint">includes their margin</p>
-        </div>
-        <div className="rounded-xl border border-border bg-surface-2 p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-text-faint">
-            Model says
-          </p>
-          <p className="mt-1 text-xl font-bold tabular text-text">
-            {modelProbability === null ? '—' : `${(modelProbability * 100).toFixed(1)}%`}
-          </p>
-          <p className="mt-0.5 text-[10px] leading-tight text-text-faint">over this line</p>
-        </div>
-      </div>
+      {!singleRung && (
+        <>
+          <input
+            type="range"
+            min={0}
+            max={lines.length - 1}
+            step={1}
+            value={safeIndex}
+            onChange={(e) => setIndex(Number(e.target.value))}
+            aria-label="Alternate line"
+            className="mt-4 w-full accent-accent"
+          />
+          <div className="flex justify-between text-[11px] tabular text-text-faint">
+            <span>{lines[0].line}</span>
+            <span>{lines[lines.length - 1].line}</span>
+          </div>
+        </>
+      )}
 
-      {/* Per-book prices at the selected threshold */}
-      <ul className="mt-4 space-y-1.5">
-        {selected.books.map((b) => {
-          const style = bookStyle(b.book, isDark)
-          const best = b.over_price !== null && b.over_price === selected.best_over
-          return (
-            <li key={b.book} className="flex items-center justify-between gap-3 text-xs">
-              <BookSwatch book={b.book} isDark={isDark} />
-              <span className="flex items-center gap-3 tabular">
-                <span className={clsx(best ? 'font-bold' : 'text-text-muted')}
-                  style={best ? { color: style.color } : undefined}>
+      <div className="mt-5 -mx-1 overflow-x-auto scroll-thin">
+        <table className="w-full min-w-[320px] border-collapse text-xs">
+          <thead>
+            <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-text-faint">
+              <th className="px-1 py-2 font-semibold">Book</th>
+              <th className="px-1 py-2 text-right font-semibold">Over</th>
+              <th className="px-1 py-2 text-right font-semibold">Implied</th>
+              <th className="px-1 py-2 text-right font-semibold">Under</th>
+            </tr>
+          </thead>
+          <tbody>
+            {selected.books.map((b) => (
+              <tr key={b.book} className="border-b border-border/60 last:border-0">
+                <td className="px-1 py-2.5">
+                  <BookSwatch book={b.book} isDark={isDark} />
+                </td>
+                <td className="px-1 py-2.5 text-right tabular text-text">
                   {formatPrice(b.over_price)}
-                </span>
-                <span className="text-text-faint">/ {formatPrice(b.under_price)}</span>
-              </span>
-            </li>
-          )
-        })}
-      </ul>
+                </td>
+                <td className="px-1 py-2.5 text-right tabular text-text-muted">
+                  {formatPercent(impliedProbability(b.over_price))}
+                </td>
+                <td className="px-1 py-2.5 text-right tabular text-text-muted">
+                  {formatPrice(b.under_price)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
 
-      <p className="mt-4 text-[11px] leading-relaxed text-text-faint">
-        Over / under prices, best over highlighted. A difference between the book's
-        implied percentage and the model's is a disagreement, not an edge — the
-        books price in news this model never sees.
+      <p className="mt-3 text-[11px] leading-relaxed text-text-faint">
+        Implied percentages include the book's margin, which is why a market's
+        two sides add to more than 100%. A difference from the model is a
+        disagreement, not an edge — the books price in news the model never sees.
       </p>
+      <OddsFreshness
+        fetchedAt={alternates.fetched_at}
+        requestsRemaining={alternates.requests_remaining}
+        className="mt-1.5 text-[11px] text-text-faint"
+      />
     </div>
   )
 }

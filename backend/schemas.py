@@ -183,8 +183,6 @@ class AlternateBookPrice(BaseModel):
 class AlternateLine(BaseModel):
     line: float
     books: list[AlternateBookPrice] = []
-    best_over: Optional[float] = None
-    best_under: Optional[float] = None
 
 
 class AlternatesResponse(BaseModel):

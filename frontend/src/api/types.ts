@@ -172,8 +172,6 @@ export interface AlternateBookPrice {
 export interface AlternateLine {
   line: number
   books: AlternateBookPrice[]
-  best_over: number | null
-  best_under: number | null
 }
 
 export interface AlternatesResponse {
