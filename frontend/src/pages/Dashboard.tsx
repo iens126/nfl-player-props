@@ -439,6 +439,26 @@ export default function Dashboard() {
                 )}
               </div>
 
+              {/* Sits directly under the chart it contextualises: the chart shows
+                  what this defense allowed week to week, and this is the season
+                  summary and league rank behind those bars. */}
+              {opponent && (
+                <Card>
+                  <SectionHeading
+                    title="Defensive Matchup"
+                    subtitle={`What ${opponent} allows, with league ranks from this season's team data`}
+                  />
+                  {defense.loading && (
+                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                      <SkeletonCard />
+                      <SkeletonCard />
+                    </div>
+                  )}
+                  {defense.error && <ErrorState message={defense.error} />}
+                  {defense.data && <DefenseMatchup defense={defense.data} showPassing={showPassing} showRushing={showRushing} />}
+                </Card>
+              )}
+
               {/* Supporting reads. Three across on a wide screen so the whole
                   picture fits a browser window instead of a long scroll. */}
               {opponent && line !== null && !projection.loading && projection.data && (
@@ -478,20 +498,6 @@ export default function Dashboard() {
                 <SectionHeading title="Player Stability" subtitle="How consistent this player's production has been" />
                 <StabilityPanel stability={summary.data.stability} />
               </Card>
-
-              {opponent && (
-                <Card>
-                  <SectionHeading title="Defensive Matchup" subtitle={`League ranks computed from this season's team data`} />
-                  {defense.loading && (
-                    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                      <SkeletonCard />
-                      <SkeletonCard />
-                    </div>
-                  )}
-                  {defense.error && <ErrorState message={defense.error} />}
-                  {defense.data && <DefenseMatchup defense={defense.data} showPassing={showPassing} showRushing={showRushing} />}
-                </Card>
-              )}
 
               {projection.data && (
                 <Collapsible title="How is this projection calculated?">
