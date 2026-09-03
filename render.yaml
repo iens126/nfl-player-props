@@ -10,10 +10,16 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
+      # Extra browser origins allowed to call the API, comma-separated. The
+      # deployed frontend and local dev are already allowed in backend/main.py,
+      # and Vercel preview URLs are matched by pattern - this is only for
+      # additional origins (a custom domain, say). Leaving it blank is fine.
+      #
+      # Do NOT put the primary frontend URL here alone: a Blueprint re-sync
+      # rewrites dashboard values from this file, which is how the deployed
+      # site previously lost access to its own API.
       - key: CORS_ORIGINS
-        value: http://localhost:5173
-        # Update this in the Render dashboard once the frontend is deployed,
-        # e.g. https://your-app.vercel.app (comma-separate multiple origins).
+        sync: false
       # Optional: live sportsbook odds. Get a free key at the-odds-api.com
       # and set it in the Render dashboard (leave unset to disable the panel).
       - key: ODDS_API_KEY

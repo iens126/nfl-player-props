@@ -53,12 +53,39 @@ app = FastAPI(
     version="1.0.0",
 )
 
-_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
-_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", _default_origins).split(",") if o.strip()]
+# The frontends this API exists to serve. These are always allowed, and
+# CORS_ORIGINS *adds* to them rather than replacing them: this list living only
+# in a dashboard env var meant that a Blueprint re-sync silently reset it to
+# the render.yaml value and cut the deployed site off from its own API, which
+# surfaces as "Could not reach the API" on every panel. Nothing here is a
+# security boundary - the API is public, read-only, and sends no credentials
+# (allow_credentials=False), so CORS only decides which browser pages may read
+# data that is already public.
+_BASELINE_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://nfl-player-props.vercel.app",
+]
+
+def resolve_cors_origins(configured: str | None) -> list[str]:
+    """Baseline origins plus any comma-separated extras, de-duplicated."""
+    extra = [o.strip() for o in (configured or "").split(",") if o.strip()]
+    return list(dict.fromkeys(_BASELINE_ORIGINS + extra))
+
+
+_origins = resolve_cors_origins(os.environ.get("CORS_ORIGINS"))
+
+# Vercel gives every preview deployment its own generated subdomain, so match
+# the project's previews by pattern instead of listing them.
+_origin_regex = os.environ.get(
+    "CORS_ORIGIN_REGEX",
+    r"https://nfl-player-props-[a-z0-9-]+\.vercel\.app",
+)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
+    allow_origin_regex=_origin_regex,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
