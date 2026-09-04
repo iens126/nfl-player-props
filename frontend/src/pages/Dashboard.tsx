@@ -631,9 +631,10 @@ function ProjectionExplainer({ result }: { result: ProjectionResponse }) {
         </span>{' '}
         against {result.opponent}. For quarterbacks this is based on the opponent's pass defense
         z-score relative to the league, scaled by the player's own volatility. For skill-position
-        players it compares what {result.opponent} allows to players at the same depth-chart rank
-        (e.g. a team's WR1) against the league average at that rank — a closer proxy for the
-        specific matchup than a defense's blended average across every receiver it has faced.
+        players it compares what {result.opponent} allows to that position against the league
+        average, then scales the gap by how much of it actually repeats — which is substantial for
+        run defense and very little for receivers, so the adjustment stays small where the
+        evidence is weak.
       </p>
       <p>
         The <span className="font-semibold text-text">projection</span> is the adjusted mean of

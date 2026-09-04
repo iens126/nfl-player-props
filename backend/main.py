@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Make sure the repo root (parent of backend/) is importable as `core` regardless
@@ -21,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.data_loader import (
-    bettable_columns, get_pos, find_player, load_player_data, load_team_data,
+    bettable_columns, find_player, load_player_data, load_team_data,
     load_team_meta, load_current_rosters, current_team_and_position, load_career_data,
     upcoming_schedule, clear_cache,
 )
@@ -47,10 +48,39 @@ logger = logging.getLogger("player_props_api")
 
 POSITION_GROUPS = ['QB', 'WR', 'TE', 'RB']
 
+def _warm_cache_in_background() -> None:
+    """Pull the nflverse datasets as soon as the app boots.
+
+    Warming in a daemon thread keeps startup (and the health check that gates
+    traffic) instant, while making it likely the data is already resident by
+    the time a request lands. A failed warm-up is not fatal - the first request
+    just loads the data itself.
+    """
+    def _warm():
+        try:
+            load_team_data()
+            load_player_data()
+            load_current_rosters()
+            load_team_meta()
+            load_career_data()
+            logger.info("Warm-up complete: nflverse datasets cached")
+        except Exception:
+            logger.exception("Cache warm-up failed; falling back to lazy loading")
+
+    threading.Thread(target=_warm, name="cache-warmup", daemon=True).start()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    _warm_cache_in_background()
+    yield
+
+
 app = FastAPI(
     title="NFL Player Props API",
     description="Analytics API for the NFL Player Props application.",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # The frontends this API exists to serve. These are always allowed, and
@@ -90,32 +120,6 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def warm_cache():
-    """Pull the nflverse datasets in the background as soon as the app boots.
-
-    Render's free tier spins the service down when idle, so the first request
-    after a wake-up would otherwise pay for both the container start *and* the
-    dataset download. Warming in a daemon thread keeps startup (and the health
-    check that gates traffic) instant, while making it likely the data is
-    already resident by the time a user's first request lands.
-    """
-    def _warm():
-        try:
-            load_team_data()
-            load_player_data()
-            load_current_rosters()
-            load_team_meta()
-            load_career_data()
-            logger.info("Warm-up complete: nflverse datasets cached")
-        except Exception:
-            # A failed warm-up is not fatal - the first request will just load
-            # the data itself, exactly as it did before.
-            logger.exception("Cache warm-up failed; falling back to lazy loading")
-
-    threading.Thread(target=_warm, name="cache-warmup", daemon=True).start()
 
 
 @app.exception_handler(Exception)

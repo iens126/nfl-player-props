@@ -58,9 +58,11 @@ export interface Constants {
 export interface Aggregates {
   league_team_stats: Record<string, { mean: number; std: number }>
   defense_weekly: Record<string, { pass: Record<string, number>[]; run: Record<string, number>[] }>
-  rank_aggregates: Record<string, (number | null)[]>
+  /** "TEAM|POSITION|STAT" (and "NFL|...") -> mean allowed. */
+  position_allowed: Record<string, number>
+  /** "POSITION|STAT" -> how much of a defense's deviation actually repeats. */
+  signal_reliability: Record<string, number>
   career_defense_allowed: Record<string, Record<string, Record<string, number>>>
-  depth_chart_ranks: Record<string, number | null>
   constants: Constants
 }
 

@@ -192,10 +192,19 @@ export default function Methodology() {
                 allowed average for that stat against the full-league mean and standard deviation.
               </li>
               <li>
-                <span className="font-medium text-text">RB / WR / TE:</span> weight = k × (what
-                the opponent allows to players at the same depth-chart rank − the league average at
-                that rank). A player's depth-chart rank is resolved from nflverse depth charts by
-                name, falling back to fuzzy matching.
+                <span className="font-medium text-text">RB / WR / TE:</span> weight = k ×
+                reliability × (what the opponent allows to that position − the league average for
+                it). The reliability term is measured, not assumed: it is how much of such a gap
+                actually repeats from one half of a season to the next, and it varies a lot —
+                around 0.50 for rushing yards allowed to backs, 0.13 for receiving yards allowed
+                to receivers. So the adjustment is real for run defense and close to nothing for
+                receivers.
+              </li>
+              <li className="list-none pt-1 text-text-faint">
+                This replaced a comparison against players at the same depth-chart rank (a
+                defense's WR1 average against the league's WR1 average). It sounded sharper and
+                measured as noise — split-half correlation of +0.05 — and tested out of sample it
+                made projections <em>worse</em> than applying no adjustment at all.
               </li>
             </ul>
             <p>

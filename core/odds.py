@@ -92,6 +92,23 @@ for _abbr, _full in TEAM_NAMES.items():
     ABBR_BY_TEAM_NAME.setdefault(_full, _abbr)
 
 
+_NAME_SUFFIXES = {'jr', 'sr', 'ii', 'iii', 'iv', 'v'}
+
+
+def normalize_player(name: str | None) -> str:
+    """Casefold, drop punctuation and generational suffixes.
+
+    The books and nflverse disagree on both - "Marvin Harrison Jr." against
+    "Marvin Harrison", "A.J. Brown" against "AJ Brown". Matching on the raw
+    string meant those players silently reported no line posted, which is
+    indistinguishable from the book genuinely not offering one.
+    """
+    if not name:
+        return ''
+    cleaned = ''.join(c for c in str(name).lower() if c.isalnum() or c.isspace())
+    return ' '.join(p for p in cleaned.split() if p not in _NAME_SUFFIXES)
+
+
 def abbr_for_team_name(name: str | None) -> str | None:
     """nflverse abbreviation for a full team name, or None if unrecognised."""
     if not name:
@@ -361,10 +378,8 @@ def player_prop(player: str, team: str, opponent: str, stat: str) -> dict:
         return {'status': 'error', 'message': 'Could not reach the odds provider.', 'books': []}
 
     by_player = _collect_players(payload, market)
-    books = next(
-        (v for k, v in by_player.items() if k.strip().lower() == player.strip().lower()),
-        [],
-    )
+    wanted = normalize_player(player)
+    books = next((v for k, v in by_player.items() if normalize_player(k) == wanted), [])
 
     if not books:
         return {
@@ -428,7 +443,7 @@ def alternate_lines(event_id: str, stat: str, player: str) -> dict:
         logger.warning("Alternate odds failed for %s/%s: %s", event_id, stat, exc)
         return {'status': 'error', 'message': 'Could not reach the odds provider.', 'lines': []}
 
-    wanted = player.strip().lower()
+    wanted = normalize_player(player)
     # line -> book -> prices. A book publishes many rows for one player here,
     # one per threshold, so they group by line rather than collapsing per book.
     by_line: dict[float, dict[str, dict]] = {}
@@ -439,7 +454,7 @@ def alternate_lines(event_id: str, stat: str, player: str) -> dict:
             if market_data.get('key') != market:
                 continue
             for outcome in market_data.get('outcomes', []):
-                if (outcome.get('description') or '').strip().lower() != wanted:
+                if normalize_player(outcome.get('description')) != wanted:
                     continue
                 point = outcome.get('point')
                 side = (outcome.get('name') or '').lower()

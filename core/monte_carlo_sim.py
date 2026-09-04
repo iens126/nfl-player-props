@@ -1,29 +1,36 @@
-"""Matchup-adjusted Monte Carlo projection engine.
+"""The matchup adjustment: how much an opponent shifts a projection.
 
-Methodology (used verbatim by the API / frontend "how is this calculated" copy):
-  1. Take the player's last `window` (3) games for the selected stat and fit a
-     triangular distribution using the min, mean, and max of that window.
-  2. Draw `n_simulations` (10,000) samples from that distribution.
-  3. Compute a matchup weight that shifts the distribution up or down based on
-     how the selected opponent defends that stat relative to the league:
-       - QB stats: weight = k * player_std * -zdef, where zdef is the
-         opponent's z-score (vs league mean/std) for the equivalent team stat.
-       - RB/WR/TE stats: weight = k * (defense_avg - league_avg), where both
-         averages are computed for players at the same depth-chart rank as
-         the player being projected (e.g. WR1 vs WR1), since a defense's
-         production allowed to a "WR1" is a better proxy for a matchup than
-         its blended average across every receiver it has faced.
-  4. Add the weight to every simulated draw. The mean of the adjusted
-     simulations is the model's point projection; the share of simulations
-     at/above the requested line is the over probability (1 - that = under).
+The distributions themselves live in core/projection_models.py. What remains
+here is the weight added to them, and the triangular sampler the app started
+with (now evaluated in closed form).
+
+  - QB stats: weight = k * player_std * -zdef, where zdef is the opponent's
+    z-score (against the league mean/std) for the equivalent team stat.
+  - RB/WR/TE stats: weight = k * reliability * (defense_avg - league_avg),
+    comparing what the defense allows to that position against the league,
+    scaled by how much of such a gap actually repeats.
+
+That last term replaced a depth-chart-rank comparison - a defense's WR1
+average against the league's WR1 average. It read as more precise and measured
+as noise: split-half correlation of +0.05 for yards per target against a team's
+primary receiver, on ~122 targets per defense per season, against +0.19 to
++0.30 for the same defenses pooled across all receivers. Out of sample, on
+strictly prior games, the rank version made projections *worse* than applying
+no adjustment at all (MAE +0.073 yards on receiving yards); the position-level
+version scaled by reliability is neutral (+0.004).
+
+Reliability is measured from the loaded data rather than assumed, and varies a
+lot by stat: about 0.50 for rushing yards allowed to backs, 0.28 for receiving
+yards allowed to tight ends, 0.13 for receiving yards allowed to receivers. So
+the adjustment is meaningful where run defense is concerned and close to
+nothing for receivers, which is what the evidence supports.
 """
 
 import numpy as np
 import pandas as pd
-from rapidfuzz import process, fuzz
 
 from core.data_loader import (
-    load_team_data, load_player_data, load_depth_data,
+    load_team_data, load_player_data, load_career_data,
     find_player, pass_def, run_def, cached,
 )
 
@@ -56,98 +63,6 @@ def def_league_stats(stat_cat):
     return avg, std
 
 
-def best_name_match(name, name_list, threshold=85):
-    if len(name_list) == 0:
-        return None
-    match, score, _ = process.extractOne(name, name_list, scorer=fuzz.token_sort_ratio)
-    if score >= threshold:
-        return match
-    return None
-
-
-_SUFFIXES = {'jr', 'sr', 'ii', 'iii', 'iv', 'v'}
-
-
-def _normalize_name(name):
-    """Casefold and strip punctuation/suffixes so 'A.J. Brown' == 'AJ Brown'."""
-    cleaned = ''.join(c for c in str(name).lower() if c.isalnum() or c.isspace())
-    parts = [p for p in cleaned.split() if p not in _SUFFIXES]
-    return ' '.join(parts)
-
-
-def pos_rank_map():
-    """Every player's depth-chart rank, resolved in one pass.
-
-    This used to be a per-player lookup: for each of the ~140 players in a
-    position group it re-scanned the full stats and depth-chart frames and ran
-    a fuzzy match, which cost over a second on the first projection. Names
-    agree exactly far more often than not, so match the whole league at once on
-    a normalized key and fall back to fuzzy matching only for the leftovers.
-
-    Cached with the data it is derived from, so a refresh rebuilds it rather
-    than leaving ranks that describe an older depth chart.
-    """
-    def _build():
-        depth = load_depth_data()
-        player_stats = load_player_data()
-
-        depth = depth[['player_name', 'pos_abb', 'pos_rank']].dropna(subset=['player_name', 'pos_abb'])
-        depth = depth.drop_duplicates(subset=['player_name', 'pos_abb'], keep='first')
-        depth = depth.assign(norm_key=depth['player_name'].map(_normalize_name))
-
-        # (position, normalized name) -> rank, plus the candidate pool per
-        # position for the fuzzy fallback.
-        exact = {(row.pos_abb, row.norm_key): row.pos_rank for row in depth.itertuples()}
-        by_position = depth.groupby('pos_abb')['norm_key'].unique().to_dict()
-
-        players = player_stats[['player_display_name', 'position']].dropna().drop_duplicates(
-            subset=['player_display_name'], keep='last')
-
-        ranks = {}
-        for name, pos in players.itertuples(index=False):
-            key = _normalize_name(name)
-            rank = exact.get((pos, key))
-            if rank is None:
-                match = best_name_match(key, by_position.get(pos, []))
-                rank = exact.get((pos, match)) if match is not None else None
-            ranks[name] = np.nan if rank is None else rank
-        return ranks
-
-    return cached("pos_rank_map", _build)
-
-
-def get_pos_rank(name):
-    """A player's depth-chart rank at their position (1 = starter)."""
-    return pos_rank_map().get(name, np.nan)
-
-
-def by_positon_rank(defense, pos, stat_cat):
-    """Average/std of `stat_cat` grouped by depth-chart rank (1/2/3/other) for a
-    position, either league-wide (defense='NFL') or against one specific defense."""
-    def _build():
-        player_stats = load_player_data()
-        if defense == 'NFL':
-            positional_stats = player_stats[player_stats['position'] == pos].copy()
-        else:
-            positional_stats = player_stats[(player_stats['opponent_team'] == defense) & (player_stats['position'] == pos)].copy()
-
-        positional_stats['rank'] = positional_stats['player_display_name'].map(pos_rank_map())
-
-        positional_stats['rank_group'] = positional_stats['rank'].apply(
-            lambda r: r if r in [1, 2, 3] else 'other'
-        )
-
-        stats = (positional_stats.groupby('rank_group')[stat_cat].agg(['mean', 'std', 'count']).reset_index())
-
-        for group in [1, 2, 3, 'other']:
-            if group not in stats['rank_group'].values:
-                stats.loc[len(stats)] = [group, np.nan, np.nan, 0]
-
-        return stats
-
-    return cached(f"pos_rank_stats:{defense}:{pos}:{stat_cat}", _build)
-
-
 def create_weight(name, def_team, stat_cat):
     """Matchup adjustment (see module docstring for the full methodology)."""
     pos_values = find_player(name)['position'].unique()
@@ -171,15 +86,18 @@ def create_weight(name, def_team, stat_cat):
         weight = k * player_std * (-zdef)
 
     else:
+        # Position-level, scaled by how much of the gap actually repeats. This
+        # replaced a depth-chart-rank comparison (a defense's WR1 average
+        # against the league's WR1 average) that measured out as noise: split
+        # -half correlation +0.05 on ~122 targets per defense per season, while
+        # the position-level figure carries between 0.13 (receivers) and 0.50
+        # (backs on the ground).
         k = POSITION_K.get(pos, DEFAULT_K)
-        player_std = find_player(name)[stat_cat].std()
-        rank = get_pos_rank(name)
-        rank_idx = {1: 0, 2: 1, 3: 2}.get(rank, 3)
+        league_avg = position_allowed('NFL', pos, stat_cat)
+        defense_avg = position_allowed(def_team, pos, stat_cat)
+        reliability = signal_reliability(pos, stat_cat)
 
-        league_avg = by_positon_rank('NFL', pos, stat_cat).iat[rank_idx, 1]
-        defense_avg = by_positon_rank(def_team, pos, stat_cat).iat[rank_idx, 1]
-
-        weight = k * (defense_avg - league_avg)
+        weight = k * reliability * (defense_avg - league_avg)
 
     if np.isnan(weight) or np.isinf(weight):
         weight = 0.0
@@ -231,3 +149,80 @@ def project(name, def_team, stat_cat, line):
         'simulations': int(len(adjusted)),
         'window_games': SIM_WINDOW,
     }
+
+
+# ---------------------------------------------------------------------------
+# Position-level defensive signal
+# ---------------------------------------------------------------------------
+#
+# The matchup adjustment for skill positions used to compare what a defense
+# allowed to players at the same depth-chart rank - a defense's WR1 average
+# against the league's WR1 average. Measuring that showed it does not persist:
+# split-half correlation of +0.05 for yards per target against a team's primary
+# receiver, on ~122 targets per defense per season. Splitting by rank divides
+# one weak signal into noisier pieces.
+#
+# What does persist is the position-level figure, and by very different amounts
+# per stat: a defense's rushing yards allowed to backs carries about half its
+# signal from one half of a season to the next, while receiving yards allowed
+# to receivers carries barely an eighth. So the adjustment is now scaled by
+# that measured reliability - a defense ten yards more generous than average
+# moves the projection ten yards times however much of that gap is repeatable.
+#
+# Reliability is measured from the loaded data rather than hardcoded, so it
+# tracks the league rather than a number that was true in some past season.
+
+_MIN_ROWS_FOR_RELIABILITY = 800
+
+
+def position_allowed(defense, position, stat_cat):
+    """Mean `stat_cat` this defense allows to `position`. 'NFL' = league average."""
+    def _build():
+        stats = load_player_data()
+        rows = stats[stats['position'] == position]
+        if defense != 'NFL':
+            rows = rows[rows['opponent_team'] == defense]
+        values = rows[stat_cat].dropna() if stat_cat in rows.columns else pd.Series(dtype=float)
+        return float(values.mean()) if len(values) else float('nan')
+
+    return cached(f"pos_allowed:{defense}:{position}:{stat_cat}", _build)
+
+
+def signal_reliability(position, stat_cat):
+    """How much of a defense's position-level deviation actually repeats.
+
+    Split-half within each season, averaged, then Spearman-Brown corrected up
+    to a full season - which is the window the averages above are taken over.
+    Returns 0 when the split-half is negative or the sample is too thin, which
+    makes the adjustment vanish rather than amplify noise.
+    """
+    def _build():
+        career = load_career_data()
+        rows = career[(career['position'] == position)]
+        if 'season_type' in rows.columns:
+            rows = rows[rows['season_type'] == 'REG']
+        if stat_cat not in rows.columns:
+            return 0.0
+        rows = rows[rows[stat_cat].notna()]
+        if len(rows) < _MIN_ROWS_FOR_RELIABILITY:
+            return 0.0
+
+        halves = []
+        for _season, season_rows in rows.groupby('season', observed=True):
+            midpoint = season_rows['week'].median()
+            first = season_rows[season_rows['week'] <= midpoint].groupby(
+                'opponent_team', observed=True)[stat_cat].mean()
+            second = season_rows[season_rows['week'] > midpoint].groupby(
+                'opponent_team', observed=True)[stat_cat].mean()
+            paired = pd.concat([first, second], axis=1, keys=['a', 'b']).dropna()
+            if len(paired) >= 20:
+                halves.append(paired['a'].corr(paired['b']))
+
+        if not halves:
+            return 0.0
+        half = float(np.nanmean(halves))
+        if not np.isfinite(half) or half <= 0:
+            return 0.0
+        return float(np.clip(2 * half / (1 + half), 0.0, 1.0))
+
+    return cached(f"signal_reliability:{position}:{stat_cat}", _build)

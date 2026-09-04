@@ -44,7 +44,6 @@ function currentSeasonGames(games: GameRow[], currentSeason: number): GameRow[] 
  * aggregates, which is why they fit in the browser.
  */
 export function createWeight(
-  name: string,
   games: GameRow[],
   opponent: string,
   stat: string,
@@ -75,19 +74,16 @@ export function createWeight(
     const zDefense = (teamAvg - league.mean) / league.std
     weight = k * playerStd * -zDefense
   } else {
+    // Position-level, scaled by how much of the gap actually repeats. This
+    // replaced a depth-chart-rank comparison that measured out as noise; see
+    // core/monte_carlo_sim.py for the numbers.
     const k = constants.position_k[position] ?? constants.default_k
-    const rank = aggregates.depth_chart_ranks[name]
-    const rankIndex = rank === 1 ? 0 : rank === 2 ? 1 : rank === 3 ? 2 : 3
+    const leagueAvg = aggregates.position_allowed[`NFL|${position}|${stat}`]
+    const defenseAvg = aggregates.position_allowed[`${opponent}|${position}|${stat}`]
+    const reliability = aggregates.signal_reliability[`${position}|${stat}`]
+    if (leagueAvg == null || defenseAvg == null || reliability == null) return 0
 
-    const leagueRow = aggregates.rank_aggregates[`NFL|${position}|${stat}`]
-    const defenseRow = aggregates.rank_aggregates[`${opponent}|${position}|${stat}`]
-    if (!leagueRow || !defenseRow) return 0
-
-    const leagueAvg = leagueRow[rankIndex]
-    const defenseAvg = defenseRow[rankIndex]
-    if (leagueAvg == null || defenseAvg == null) return 0
-
-    weight = k * (defenseAvg - leagueAvg)
+    weight = k * reliability * (defenseAvg - leagueAvg)
   }
 
   return Number.isFinite(weight) ? weight : 0
@@ -257,7 +253,7 @@ export function project(input: ProjectInput): ProjectionResponse {
   }
 
   const weights = recencyWeights(values.length)
-  const shift = createWeight(player, games, opponent, stat, aggregates)
+  const shift = createWeight(games, opponent, stat, aggregates)
   const { mean: rawMean, ess } = weightedMoments(values, weights)
 
   const alternatives: Record<string, number> = {}

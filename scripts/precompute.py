@@ -44,7 +44,9 @@ from core.data_loader import (
     bettable_columns, load_career_data, load_current_rosters, load_team_data,
     load_team_meta, pass_def, run_def, upcoming_schedule,
 )
-from core.monte_carlo_sim import POSITION_K, DEFAULT_K, STAT_MAP, by_positon_rank, pos_rank_map
+from core.monte_carlo_sim import (
+    POSITION_K, DEFAULT_K, STAT_MAP, position_allowed, signal_reliability,
+)
 from core.ml_model import USAGE_COLUMNS
 from core.projection_models import HALF_LIFE_GAMES, MAX_WINDOW
 
@@ -251,24 +253,26 @@ def build_aggregates(writer: Writer, teams: list[str], positions: list[str]) -> 
             entry[kind] = frame[cols].to_dict('records')
         defense_weekly[team] = entry
 
-    # Positional rank aggregates: what a defense allows to a WR1 vs a WR2, and
-    # the league baseline at each rank.
-    # Every position an indexed player is labelled with in their stat lines -
-    # not just the four the picker groups by. A fullback listed at RB on the
-    # roster still has FB stat lines, and the matchup weight looks the rank up
-    # by that stat-line position, so leaving FB out silently zeroed his weight.
-    rank_aggregates = {}
+    # What each defense allows to each position, against the league baseline,
+    # plus how much of that gap actually repeats. The matchup weight is the
+    # product of the two - see core/monte_carlo_sim.py for why the previous
+    # depth-chart-rank version was dropped.
+    allowed = {}
+    reliability = {}
     for pos in positions:
         for stat in bettable_columns:
-            for defense in ['NFL'] + teams:
-                try:
-                    frame = by_positon_rank(defense, pos, stat)
-                except Exception:
-                    continue
-                means = frame['mean'].tolist()
-                if all(pd.isna(m) for m in means):
-                    continue
-                rank_aggregates[f'{defense}|{pos}|{stat}'] = means
+            # Named distinctly: `league` above is the team-stat dict that
+            # feeds league_team_stats, and reusing the name here silently
+            # replaced it with a float.
+            league_mean = position_allowed('NFL', pos, stat)
+            if not pd.notna(league_mean):
+                continue
+            reliability[f'{pos}|{stat}'] = round(signal_reliability(pos, stat), 6)
+            allowed[f'NFL|{pos}|{stat}'] = round(float(league_mean), 6)
+            for defense in teams:
+                value = position_allowed(defense, pos, stat)
+                if pd.notna(value):
+                    allowed[f'{defense}|{pos}|{stat}'] = round(float(value), 6)
 
     # Career chart reference: what a defense allowed to a position, per season.
     career = load_career_data()
@@ -284,18 +288,15 @@ def build_aggregates(writer: Writer, teams: list[str], positions: list[str]) -> 
             if stat in chunk.columns and not pd.isna(chunk[stat].mean())
         }
 
-    ranks = {k: (None if (isinstance(v, float) and np.isnan(v)) else int(v))
-             for k, v in pos_rank_map().items()}
-
     # Six decimals rather than the default four: the matchup weight is a
     # difference of two of these averages scaled by k, so rounding here shows
     # up directly in every projection. The extra precision costs a few KB.
     writer.write('aggregates.json', {
         'league_team_stats': league,
         'defense_weekly': defense_weekly,
-        'rank_aggregates': rank_aggregates,
+        'position_allowed': allowed,
+        'signal_reliability': reliability,
         'career_defense_allowed': career_allowed,
-        'depth_chart_ranks': ranks,
         'constants': {
             'stat_map': {k: list(v) for k, v in STAT_MAP.items()},
             'position_k': POSITION_K,

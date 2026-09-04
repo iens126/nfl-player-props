@@ -31,6 +31,11 @@ export function lgamma(x: number): number {
 /**
  * Complementary error function.
  *
+ * Coefficients are written in their exact double representation; the published
+ * table carries a digit or two more than a 64-bit float can hold, and spelling
+ * them out as they will actually be stored keeps what the code says and what
+ * it computes the same thing.
+ *
  * Numerical Recipes' `erfc` via a Chebyshev fit — accurate to about 1.2e-7
  * across the whole real line, which is far finer than any probability this app
  * displays (it rounds to a tenth of a percent).
@@ -40,11 +45,11 @@ export function erfc(x: number): number {
   const t = 2 / (2 + z)
   const y = 4 * t - 2
   const coefficients = [
-    -1.3026537197817094, 6.4196979235649026e-1, 1.9476473204185836e-2,
-    -9.561514786808631e-3, -9.46595344482036e-4, 3.66839497852761e-4,
-    4.2523324806907e-5, -2.0278578112534e-5, -1.624290004647e-6,
-    1.303655835580e-6, 1.5626441722e-8, -8.5238095915e-8,
-    6.529054439e-9, 5.059343495e-9, -9.91364156e-10,
+    -1.3026537197817094, 0.6419697923564902, 0.019476473204185836,
+    -0.00956151478680863, -0.000946595344482036, 0.000366839497852761,
+    4.2523324806907e-05, -2.0278578112534e-05, -1.624290004647e-06,
+    1.30365583558e-06, 1.5626441722e-08, -8.5238095915e-08,
+    6.529054439e-09, 5.059343495e-09, -9.91364156e-10,
     -2.27365122e-10, 9.6467911e-11, 2.394038e-12,
     -6.886027e-12, 8.94487e-13, 3.13092e-13,
     -1.12708e-13, 3.81e-16, 7.106e-15,

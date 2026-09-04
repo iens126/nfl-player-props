@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { InformationCircleIcon } from '@heroicons/react/24/outline'
 import type { StabilityStat } from '../../api/types'
-import { Badge, stabilityTone } from '../common/Badge'
+import { Badge } from '../common/Badge'
+import { stabilityTone } from '../../lib/stabilityTone'
 import { statLabel } from '../../lib/statLabels'
 
 export function StabilityPanel({ stability }: { stability: StabilityStat[] }) {

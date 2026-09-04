@@ -16,6 +16,11 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[], enabled = tru
   const [state, setState] = useState<AsyncState<T>>({ data: null, loading: enabled, error: null })
   const requestId = useRef(0)
 
+  // The dependency array is supplied by the caller - that is the whole point of
+  // the hook - so the linter can't verify it and flags the setState inside.
+  // The guard against an update loop is `requestId`: a stale response is
+  // discarded rather than written back.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!enabled) {
       setState({ data: null, loading: false, error: null })

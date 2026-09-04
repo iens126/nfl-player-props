@@ -1,7 +1,7 @@
 import type { PropsWithChildren } from 'react'
 import clsx from 'clsx'
 
-type Tone = 'neutral' | 'accent' | 'over' | 'under' | 'warn' | 'high' | 'medium' | 'low'
+export type Tone = 'neutral' | 'accent' | 'over' | 'under' | 'warn' | 'high' | 'medium' | 'low'
 
 const TONE_CLASSES: Record<Tone, string> = {
   neutral: 'bg-surface-3 text-text-muted border-border',
@@ -30,11 +30,4 @@ export function Badge({
       {children}
     </span>
   )
-}
-
-export function stabilityTone(rating: string | null | undefined): Tone {
-  if (rating === 'HIGH') return 'high'
-  if (rating === 'MEDIUM') return 'medium'
-  if (rating === 'LOW') return 'low'
-  return 'neutral'
 }

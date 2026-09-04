@@ -74,7 +74,7 @@ def check_bundle(root: Path) -> Failures:
         )
 
     # Aggregates the projection maths reads; empty means every weight is zero.
-    for key in ('rank_aggregates', 'defense_weekly', 'depth_chart_ranks', 'league_team_stats'):
+    for key in ('position_allowed', 'signal_reliability', 'defense_weekly', 'league_team_stats'):
         failures.check(bool(aggregates.get(key)), f"aggregates.{key} is empty")
 
     constants = aggregates.get('constants', {})
