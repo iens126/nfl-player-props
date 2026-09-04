@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ArrowsRightLeftIcon, CalendarDaysIcon } from '@heroicons/react/24/outline'
 import { api, ApiError } from '../api/client'
@@ -22,10 +22,12 @@ import { ModelConsensus } from '../components/player/ModelConsensus'
 import { HitRatePanel } from '../components/player/HitRatePanel'
 import { OddsList } from '../components/player/OddsList'
 import { LineExplorer } from '../components/player/LineExplorer'
+import { SavePick } from '../components/player/SavePick'
 import { ModelInfoPanel } from '../components/player/ModelInfoPanel'
 import { statLabel } from '../lib/statLabels'
 import { matchupColors } from '../lib/teamColors'
 import { useTheme } from '../lib/theme'
+import { STARTING_BANKROLL, gradePick, loadPicks, summarise } from '../lib/picks'
 import type { AlternatesResponse, ModelKey, OddsResponse, ProjectionResponse } from '../api/types'
 
 const PASS_TYPE_STATS = new Set([
@@ -254,6 +256,21 @@ export default function Dashboard() {
       })
     }
   }
+
+  // Coins still free to stake. Pending picks are held at risk, so this reads
+  // the saved store rather than assuming the opening bankroll.
+  const [available, setAvailable] = useState(STARTING_BANKROLL)
+
+  // Pending picks hold coins at risk, so the figure offered on the save panel
+  // reflects what is actually left rather than the opening bankroll.
+  const refreshBankroll = useCallback(() => {
+    try {
+      setAvailable(summarise(loadPicks().map((p) => gradePick(p, []))).available)
+    } catch {
+      setAvailable(STARTING_BANKROLL)
+    }
+  }, [])
+  useEffect(() => { refreshBankroll() }, [refreshBankroll])
 
   const activeModelInfo = (models.data ?? []).find((m) => m.key === model) ?? null
 
@@ -491,6 +508,20 @@ export default function Dashboard() {
                     onProbabilityFor={(line) => alternates.probabilities[line] ?? null}
                   />
                 </div>
+              )}
+
+              {/* Tracking needs a settled line and price, so it appears only
+                  once there's a projection on screen to save. */}
+              {projection.data && summary.data && (
+                <SavePick
+                  key={`${player}-${stat}-${line}-${opponent}`}
+                  projection={projection.data}
+                  odds={odds.data}
+                  team={summary.data.team}
+                  schedule={schedule.data}
+                  available={available}
+                  onSaved={refreshBankroll}
+                />
               )}
 
               <Card>

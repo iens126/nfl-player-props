@@ -3,6 +3,7 @@ import { NavBar } from './components/layout/NavBar'
 import { Footer } from './components/layout/Footer'
 import Dashboard from './pages/Dashboard'
 import Methodology from './pages/Methodology'
+import MyPicks from './pages/MyPicks'
 import OddsBoard from './pages/OddsBoard'
 
 export default function App() {
@@ -13,6 +14,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/odds" element={<OddsBoard />} />
+          <Route path="/picks" element={<MyPicks />} />
           <Route path="/methodology" element={<Methodology />} />
         </Routes>
       </main>

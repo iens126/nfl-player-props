@@ -152,6 +152,12 @@ export const api = {
     return file.summary
   },
 
+  /** Raw career game rows for a player — what the pick tracker settles against. */
+  playerGames: async (name: string) => {
+    const file = await fromBundle(() => loadPlayer(name), `No data found for player '${name}'`)
+    return file.games
+  },
+
   playerGameLog: async (name: string): Promise<GameLogResponse> => {
     const [file, aggregates] = await Promise.all([
       fromBundle(() => loadPlayer(name), `No data found for player '${name}'`),
