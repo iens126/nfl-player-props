@@ -15,6 +15,7 @@ import { PerformanceChart, type ChartRange } from '../components/player/Performa
 import { GameLogTable } from '../components/player/GameLogTable'
 import { StabilityPanel } from '../components/player/StabilityPanel'
 import { DefenseMatchup } from '../components/player/DefenseMatchup'
+import { DefenseRoles } from '../components/player/DefenseRoles'
 import { Collapsible } from '../components/common/Collapsible'
 import { HowItWorks } from '../components/layout/HowItWorks'
 import { ModelConsensus } from '../components/player/ModelConsensus'
@@ -455,7 +456,12 @@ export default function Dashboard() {
                     </div>
                   )}
                   {defense.error && <ErrorState message={defense.error} />}
-                  {defense.data && <DefenseMatchup defense={defense.data} showPassing={showPassing} showRushing={showRushing} />}
+                  {defense.data && (
+                    <>
+                      <DefenseMatchup defense={defense.data} showPassing={showPassing} showRushing={showRushing} />
+                      <DefenseRoles team={opponent} roles={defense.data.roles ?? []} />
+                    </>
+                  )}
                 </Card>
               )}
 

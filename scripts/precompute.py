@@ -208,13 +208,22 @@ def build_players(writer: Writer, names: list[str]) -> list[str]:
 def build_defense(writer: Writer, teams: list[str]) -> None:
     """Per-team defensive summaries. Depends only on the team, so all 32 fit."""
     from backend.main import defense_matchup
+    from core.defense_roles import defense_roles
     from fastapi import HTTPException
 
     for team in teams:
         try:
-            writer.write(f'defense/{team}.json', _as_json(defense_matchup(team)))
+            summary = _as_json(defense_matchup(team))
         except HTTPException:
             continue
+        # What this defense allowed by opposing role, from play-by-play. Purely
+        # descriptive - see core/defense_roles.py for why it isn't predictive.
+        try:
+            summary['roles'] = defense_roles(team)
+        except Exception:
+            logger.warning("  role breakdown failed for %s", team)
+            summary['roles'] = []
+        writer.write(f'defense/{team}.json', summary)
 
 
 def build_aggregates(writer: Writer, teams: list[str], positions: list[str]) -> None:

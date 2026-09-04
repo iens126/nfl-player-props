@@ -59,6 +59,26 @@ def load_player_data(year=None):
     return _cached(f"player_stats:{year}", lambda: nfl.load_player_stats(year).to_pandas())
 
 
+def load_pbp_data(year=None):
+    """Play-by-play for a season. Large (~50k rows, 372 columns) but only ever
+    loaded at build time, by the precompute, never per request."""
+    return _cached(f"pbp:{year}", lambda: nfl.load_pbp(year).to_pandas())
+
+
+def load_player_positions():
+    """gsis_id -> position, for joining play-by-play to a player's position.
+
+    Play-by-play identifies players by gsis_id, which is a stable key - unlike
+    the abbreviated names it also carries ("J.Smith-Njigba"), which would need
+    fuzzy matching.
+    """
+    def _load():
+        rosters = nfl.load_rosters().to_pandas()
+        rosters = rosters.dropna(subset=['gsis_id', 'position'])
+        return dict(zip(rosters['gsis_id'], rosters['position']))
+    return _cached("player_positions", _load)
+
+
 def load_depth_data(year=None):
     return _cached(f"depth_charts:{year}", lambda: nfl.load_depth_charts(year).to_pandas())
 
@@ -123,7 +143,13 @@ def load_current_rosters():
     def _load():
         df = nfl.load_rosters().to_pandas()
         df = df[df['status'] == 'ACT']
-        df = df.sort_values('week').drop_duplicates('full_name', keep='last')
+        # nflverse has shipped this both as a weekly table (several rows per
+        # player, latest week wins) and as a flat one-row-per-player snapshot.
+        # Sort by week only when it's there, so a schema change upstream
+        # doesn't take the whole build down.
+        if 'week' in df.columns:
+            df = df.sort_values('week')
+        df = df.drop_duplicates('full_name', keep='last')
         return df.set_index('full_name')[['team', 'position']]
     return _cached("current_rosters", _load)
 

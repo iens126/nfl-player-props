@@ -77,10 +77,30 @@ class DefenseSection(BaseModel):
     league_size: int
 
 
+class DefenseRoleRow(BaseModel):
+    position: str
+    role: int
+    label: str
+    games: int
+    targets: int
+    receptions: int
+    yards: float
+    yards_per_game: Optional[float] = None
+    yards_per_target: Optional[float] = None
+    completion_rate: Optional[float] = None
+    league_yards_per_game: Optional[float] = None
+    league_yards_per_target: Optional[float] = None
+    league_completion_rate: Optional[float] = None
+    rank: Optional[int] = None
+    of: int
+
+
 class DefenseSummaryOut(BaseModel):
     team: str
     passing: DefenseSection
     rushing: DefenseSection
+    # What this defense allowed by opposing role. Descriptive only.
+    roles: list[DefenseRoleRow] = []
 
 
 class ProjectionRequest(BaseModel):

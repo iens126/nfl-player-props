@@ -75,10 +75,30 @@ export interface DefenseSection {
   league_size: number
 }
 
+export interface DefenseRoleRow {
+  position: string
+  role: number
+  label: string
+  games: number
+  targets: number
+  receptions: number
+  yards: number
+  yards_per_game: number | null
+  yards_per_target: number | null
+  completion_rate: number | null
+  league_yards_per_game: number | null
+  league_yards_per_target: number | null
+  league_completion_rate: number | null
+  rank: number | null
+  of: number
+}
+
 export interface DefenseSummary {
   team: string
   passing: DefenseSection
   rushing: DefenseSection
+  /** What this defense allowed by opposing role. Descriptive, not predictive. */
+  roles: DefenseRoleRow[]
 }
 
 export type ModelKey = 'ml' | 'ensemble' | 'lognormal' | 'negbin' | 'empirical' | 'triangular'
