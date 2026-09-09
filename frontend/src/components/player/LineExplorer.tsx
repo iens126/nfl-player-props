@@ -253,6 +253,7 @@ export function LineExplorer({
       <OddsFreshness
         fetchedAt={alternates.fetched_at}
         requestsRemaining={alternates.requests_remaining}
+        cacheMinutes={alternates.cache_minutes}
         className="mt-1.5 text-[11px] text-text-faint"
       />
     </div>

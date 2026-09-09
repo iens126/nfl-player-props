@@ -174,6 +174,9 @@ export interface OddsResponse {
   market: string | null
   fetched_at: string | null
   requests_remaining: string | null
+  /** Server-side cache window, so freshness can be judged against the real
+   *  TTL rather than a hardcoded guess. Absent on a pre-`cache_minutes` API. */
+  cache_minutes?: number | null
 }
 
 export interface OddsGame {
@@ -208,6 +211,9 @@ export interface AlternatesResponse {
   lines: AlternateLine[]
   fetched_at: string | null
   requests_remaining: string | null
+  /** Server-side cache window, so freshness can be judged against the real
+   *  TTL rather than a hardcoded guess. Absent on a pre-`cache_minutes` API. */
+  cache_minutes?: number | null
 }
 
 export interface OddsBoardEntry {
@@ -228,6 +234,9 @@ export interface OddsBoardResponse {
   stat: string | null
   fetched_at: string | null
   requests_remaining: string | null
+  /** Server-side cache window, so freshness can be judged against the real
+   *  TTL rather than a hardcoded guess. Absent on a pre-`cache_minutes` API. */
+  cache_minutes?: number | null
 }
 
 export interface ProjectionRequest {

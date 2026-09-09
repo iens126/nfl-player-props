@@ -68,6 +68,9 @@ export default function OddsBoard() {
   }, [board.data])
 
   const notConfigured = games.data?.status === 'not_configured'
+  // Reported by the server rather than assumed here, so this line and the
+  // freshness warning both track ODDS_CACHE_MINUTES instead of a stale guess.
+  const cacheMinutes = board.data?.cache_minutes ?? null
 
   function openPlayer(entry: OddsBoardEntry) {
     const params = new URLSearchParams({ player: entry.player, stat })
@@ -146,7 +149,9 @@ export default function OddsBoard() {
               </div>
             </div>
             <p className="mt-3 text-xs text-text-faint">
-              Each game + stat combination costs one API credit and is cached for 10 minutes.
+              Each game + stat combination costs one API credit, then is served from cache
+              {cacheMinutes ? ` for ${cacheMinutes} minutes` : ''} — reloading the page, or
+              coming back to a combination you have already opened, costs nothing.
             </p>
           </Card>
 
@@ -225,6 +230,7 @@ export default function OddsBoard() {
                 <OddsFreshness
                   fetchedAt={board.data.fetched_at}
                   requestsRemaining={board.data.requests_remaining}
+                  cacheMinutes={board.data.cache_minutes}
                 />
               </div>
             </Card>

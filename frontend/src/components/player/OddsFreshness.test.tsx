@@ -4,6 +4,8 @@
  */
 import { describe, expect, it } from 'vitest'
 
+import { staleAfter } from './OddsFreshness'
+
 // The pure formatting logic, mirrored from the component so it can be tested
 // without a DOM renderer (the project has no React testing setup).
 function describeAge(minutes: number): string {
@@ -14,8 +16,6 @@ function describeAge(minutes: number): string {
   const days = Math.floor(hours / 24)
   return `${days} day${days === 1 ? '' : 's'} ago`
 }
-
-const STALE_AFTER_MINUTES = 20
 
 describe('odds age wording', () => {
   it.each([
@@ -35,16 +35,32 @@ describe('odds age wording', () => {
 
 describe('staleness threshold', () => {
   it('treats a fresh fetch as current', () => {
-    expect(2 > STALE_AFTER_MINUTES).toBe(false)
+    expect(2 > staleAfter(10)).toBe(false)
   })
 
-  it('tolerates the 10-minute server cache without crying stale', () => {
-    // Responses are cached for ODDS_CACHE_MINUTES (10 by default), so a line
-    // that age is expected, not a problem worth warning about.
-    expect(10 > STALE_AFTER_MINUTES).toBe(false)
+  it('tolerates the server cache without crying stale', () => {
+    // Responses are cached for ODDS_CACHE_MINUTES, so a line that age is
+    // expected, not a problem worth warning about.
+    expect(10 > staleAfter(10)).toBe(false)
   })
 
   it('flags a page that has sat open', () => {
-    expect(45 > STALE_AFTER_MINUTES).toBe(true)
+    expect(45 > staleAfter(10)).toBe(true)
+  })
+
+  it('follows the cache window the server reports', () => {
+    // The regression this exists for: with ODDS_CACHE_MINUTES at 30, a
+    // 25-minute-old snapshot is the cache working as configured, not
+    // something to warn about — and the warning's advice, "reload for current
+    // prices", would hand back that very same snapshot.
+    expect(25 > staleAfter(30)).toBe(false)
+    expect(25 > staleAfter(10)).toBe(true)
+    expect(70 > staleAfter(30)).toBe(true)
+  })
+
+  it('falls back to the default window when the server does not say', () => {
+    for (const missing of [null, undefined, 0, -5, Number.NaN]) {
+      expect(staleAfter(missing)).toBe(20)
+    }
   })
 })

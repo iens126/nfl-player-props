@@ -163,8 +163,9 @@ else works normally.
 | Variable       | Purpose                                                                 |
 | -------------- | ------------------------------------------------------------------------ |
 | `ODDS_API_KEY` | Optional. Enables the Odds Board and per-player lines — free key at [the-odds-api.com](https://the-odds-api.com). Set it in the Vercel dashboard. |
-| `ODDS_CACHE_MINUTES` | Optional (default 10). How long odds are cached; higher spends fewer API credits |
+| `ODDS_CACHE_MINUTES` | Optional (default 10). How long odds are cached for *browsing*; higher spends fewer API credits |
 | `ODDS_RESERVE_CREDITS` | Optional (default 50). Below this many credits left, browsing serves snapshots and the remainder is kept for pricing picks |
+| `ODDS_PRICING_MAX_AGE_SECONDS` | Optional (default 90). How old a snapshot may be when it prices a ranked pick. Deliberately independent of `ODDS_CACHE_MINUTES`, so raising the browsing window can't widen the window a pick is priced in |
 | `CAREER_SEASONS` | Optional (default 8). Seasons of history the precompute loads |
 | `SUPABASE_URL` | Optional. Enables accounts and the leaderboard. Also needed as a GitHub Actions secret, for settlement. |
 | `SUPABASE_ANON_KEY` | Optional. Used to verify a user's access token. |
@@ -314,6 +315,17 @@ labelled with its age; if it has none, the panel says odds are paused. Placing a
 pick still goes live, always — that call is marked `essential`, because a pick
 priced off a stale line is a bet the book is no longer offering, which is the
 hole `core/wagers.py` exists to close.
+
+**Pricing has its own freshness bound.** `essential` says only that a call may
+spend the reserve; how old a snapshot may be is the separate
+`ODDS_PRICING_MAX_AGE_SECONDS` (default 90). The two were once the same flag,
+which meant a pick could be written at whatever price browsing was willing to
+show — and raising `ODDS_CACHE_MINUTES` silently widened that window without
+touching a line of pricing code. Browsing keeps the long window and pays
+nothing extra; a pick re-reads the board when it has gone cold, which costs the
+credit or two the reserve exists to hold back. Listing events stays on the long
+window: it is `essential` because it must never be refused, not because it must
+be seconds old.
 
 The asymmetry is the point: browsing is elastic and expensive (a week's board is
 16 games × 11 markets = 176 credits), while pricing a pick is rare and costs

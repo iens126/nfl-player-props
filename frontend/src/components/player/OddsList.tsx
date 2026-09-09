@@ -92,6 +92,7 @@ export function OddsList({ odds, loading }: { odds: OddsResponse | null; loading
       <OddsFreshness
         fetchedAt={odds.fetched_at}
         requestsRemaining={odds.requests_remaining}
+        cacheMinutes={odds.cache_minutes}
         className="mt-1.5 text-[11px] text-text-faint"
       />
     </div>

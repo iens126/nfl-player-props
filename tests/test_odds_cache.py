@@ -163,6 +163,86 @@ def test_pricing_is_never_refused_for_want_of_a_snapshot(store):
     assert (value, len(calls)) == ('fresh', 1)
 
 
+# ---------------------------------------------------------------------------
+# How fresh a snapshot has to be
+# ---------------------------------------------------------------------------
+
+def test_browsing_accepts_a_snapshot_up_to_the_cache_window(store):
+    store.rows['k'] = (time.time() - odds.CACHE_MINUTES * 60 + 30, 'cached')
+    load, calls = counting_loader('fresh')
+    value, _ = odds._cached('k', load)
+    assert (value, calls) == ('cached', [])
+
+
+def test_pricing_refuses_a_snapshot_browsing_would_have_accepted(store):
+    """The bug this closes: a pick written at a half-hour-old price.
+
+    `essential` used to mean only "may spend the reserve", so a pricing call
+    took whatever browsing would have taken — and raising ODDS_CACHE_MINUTES
+    silently widened the window a pick could be priced in. Freshness is now its
+    own bound, so the same snapshot browsing is happy with sends pricing back to
+    the provider.
+    """
+    age = odds.PRICING_MAX_AGE_SECONDS + 60
+    assert age < odds.CACHE_MINUTES * 60, 'the windows must differ for this to mean anything'
+
+    store.rows['props:evt:mkt'] = (time.time() - age, ('old', '400'))
+    load, calls = counting_loader(('fresh', '399'))
+
+    # Browsing is content with it...
+    value, _ = odds._cached('props:evt:mkt', load)
+    assert (value, calls) == (('old', '400'), [])
+
+    # ...and pricing is not.
+    odds.clear_cache()
+    value, _ = odds._cached('props:evt:mkt', load, essential=True,
+                            max_age=odds.PRICING_MAX_AGE_SECONDS)
+    assert (value, len(calls)) == (('fresh', '399'), 1)
+
+
+def test_pricing_still_reuses_a_genuinely_recent_snapshot(store):
+    """Tight, not zero: a pick placed moments after another must not re-pay."""
+    store.rows['props:evt:mkt'] = (time.time() - 5, ('recent', '400'))
+    load, calls = counting_loader(('fresh', '399'))
+    value, _ = odds._cached('props:evt:mkt', load, essential=True,
+                            max_age=odds.PRICING_MAX_AGE_SECONDS)
+    assert (value, calls) == (('recent', '400'), [])
+
+
+def test_fetch_market_applies_the_short_window_only_when_pricing(store):
+    """The wiring, not just the primitive: _fetch_market picks the bound."""
+    seen = []
+
+    def fake_cached(key, loader, essential=False, max_age=None):
+        seen.append((essential, max_age))
+        return ({'bookmakers': []}, '400'), time.time()
+
+    with mock.patch.object(odds, '_cached', fake_cached):
+        odds._fetch_market('evt', 'mkt')
+        odds._fetch_market('evt', 'mkt', essential=True)
+
+    assert seen == [(False, None), (True, odds.PRICING_MAX_AGE_SECONDS)]
+
+
+def test_listing_events_keeps_the_long_window(store):
+    """Essential, but for the other reason.
+
+    list_events() is essential because it must never be refused, not because it
+    must be seconds old — it is unbilled and changes hourly. Tying freshness to
+    the same flag would have it re-fetch on every board load.
+    """
+    store.rows['events'] = (time.time() - odds.PRICING_MAX_AGE_SECONDS - 60, [{'id': 'e'}])
+    calls = []
+
+    def _get(path, params):
+        calls.append(path)
+        return [{'id': 'fresh'}], '400'
+
+    with mock.patch.object(odds, '_get', _get):
+        assert odds.list_events() == [{'id': 'e'}]
+    assert calls == []
+
+
 def test_the_credit_count_is_recorded_from_the_response_header(store):
     class Response:
         headers = {'x-requests-remaining': '317'}

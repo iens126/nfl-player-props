@@ -128,6 +128,17 @@ _cache: dict[str, tuple[float, object]] = {}
 # and holding credits back for it is the entire point of a reserve.
 RESERVE_CREDITS = int(os.environ.get("ODDS_RESERVE_CREDITS", "50"))
 
+# How old a snapshot may be when it is pricing a pick rather than being browsed.
+#
+# Browsing tolerates the full ODDS_CACHE_MINUTES because a board that lags the
+# book by half an hour is a cosmetic problem, labelled as such on screen. A pick
+# is not: the price read here is written to the database and settled against, so
+# a snapshot old enough for the book to have moved off it produces a bet at a
+# number nobody is offering. That is the hole core/wagers.py exists to close, and
+# it reopens quietly every time ODDS_CACHE_MINUTES is raised — which is why this
+# is its own bound rather than a fraction of that one.
+PRICING_MAX_AGE_SECONDS = float(os.environ.get("ODDS_PRICING_MAX_AGE_SECONDS", "90"))
+
 
 class Conserving(Exception):
     """Raised instead of spending one of the last credits on a browsing call."""
@@ -186,7 +197,7 @@ def is_configured() -> bool:
     return api_key() is not None
 
 
-def _cached(key: str, loader, essential: bool = False):
+def _cached(key: str, loader, essential: bool = False, max_age: float | None = None):
     """Read through memory, then the store, then the provider.
 
     Returns (value, fetched_at). The timestamp is when the provider was asked,
@@ -194,12 +205,18 @@ def _cached(key: str, loader, essential: bool = False):
     its real age, or the freshness line on screen becomes a lie exactly when it
     matters most.
 
-    `essential` marks a call that must not be served stale and must not be
-    refused: pricing a pick. Everything else is browsing, and browsing is what
-    gives way when the reserve is reached.
+    `essential` marks a call that must not be refused: pricing a pick spends the
+    reserve where browsing gives way to it.
+
+    `max_age` is the separate question of how old a snapshot may be before this
+    goes back to the provider, defaulting to the browsing window. The two are
+    deliberately not the same flag. Listing events is essential — it must not be
+    refused — but it is unbilled and changes hourly, so it wants the long window;
+    pricing a pick wants the short one. Folding them together is what let a pick
+    be written at a ODDS_CACHE_MINUTES-old price.
     """
     now = time.time()
-    fresh_for = CACHE_MINUTES * 60
+    fresh_for = CACHE_MINUTES * 60 if max_age is None else max_age
 
     entry = _cache.get(key)
     if entry is not None and (now - entry[0]) < fresh_for:
@@ -336,6 +353,11 @@ def _fetch_market(event_id: str, market: str, essential: bool = False):
 
     Returns (payload, remaining, fetched_at), the last of which is when the
     provider was actually asked rather than when this was called.
+
+    An essential fetch is a pick being priced, so it takes the short freshness
+    bound as well as the right to spend the reserve. That costs a credit or two
+    per pick when the board has gone cold, which is what the reserve is held
+    back for; browsing keeps the long window and pays nothing extra.
     """
     def _load():
         return _get(
@@ -345,6 +367,7 @@ def _fetch_market(event_id: str, market: str, essential: bool = False):
         )
     (payload, remaining), fetched_at = _cached(
         f"props:{event_id}:{market}", _load, essential=essential,
+        max_age=PRICING_MAX_AGE_SECONDS if essential else None,
     )
     return payload, remaining, fetched_at
 
@@ -459,6 +482,10 @@ def board(event_id: str, stat: str) -> dict:
         'requests_remaining': remaining,
         'fetched_at': datetime.fromtimestamp(fetched_at, timezone.utc)
                       .isoformat(timespec='seconds'),
+        # How long a snapshot is served for, so the UI can tell "the cache has
+        # simply not turned over yet" from "this page has been open for hours"
+        # instead of hardcoding a guess that goes wrong the moment this is tuned.
+        'cache_minutes': CACHE_MINUTES,
     }
 
 
@@ -527,6 +554,10 @@ def player_prop(player: str, team: str, opponent: str, stat: str,
         'requests_remaining': remaining,
         'fetched_at': datetime.fromtimestamp(fetched_at, timezone.utc)
                       .isoformat(timespec='seconds'),
+        # How long a snapshot is served for, so the UI can tell "the cache has
+        # simply not turned over yet" from "this page has been open for hours"
+        # instead of hardcoding a guess that goes wrong the moment this is tuned.
+        'cache_minutes': CACHE_MINUTES,
         'books_count': len(books),
     }
 
@@ -618,4 +649,8 @@ def alternate_lines(event_id: str, stat: str, player: str,
         'requests_remaining': remaining,
         'fetched_at': datetime.fromtimestamp(fetched_at, timezone.utc)
                       .isoformat(timespec='seconds'),
+        # How long a snapshot is served for, so the UI can tell "the cache has
+        # simply not turned over yet" from "this page has been open for hours"
+        # instead of hardcoding a guess that goes wrong the moment this is tuned.
+        'cache_minutes': CACHE_MINUTES,
     }

@@ -9,7 +9,7 @@ import clsx from 'clsx'
  * inactive-list report between one page load and the next — so "when was this
  * fetched" is not a footnote, it's part of reading the number honestly. It also
  * isn't necessarily live even when freshly loaded: responses are cached server
- * side for ODDS_CACHE_MINUTES (10 by default) to conserve API credits.
+ * side for ODDS_CACHE_MINUTES to conserve API credits.
  *
  * A bare clock time couldn't carry that: it showed no date, so yesterday's
  * fetch read as current, and it never updated, so it silently aged on screen.
@@ -17,9 +17,22 @@ import clsx from 'clsx'
  * plainly when the data is old enough to distrust.
  */
 
-// The server cache is 10 minutes, so anything past ~20 means the page has been
-// sitting open rather than the cache simply not having turned over.
-const STALE_AFTER_MINUTES = 20
+// Twice the server's cache window: inside one turnover the age is just the
+// cache doing its job, so warning there would flag healthy data and offer a
+// reload that returns the very same snapshot. Past two windows the snapshot
+// should have been replaced, so the age is the page having sat open instead.
+//
+// Derived from the TTL the server reports rather than hardcoded, because the
+// two are the same fact — when ODDS_CACHE_MINUTES was raised to 30, a constant
+// 20 here started warning on data that was performing exactly as configured.
+const DEFAULT_CACHE_MINUTES = 10
+
+export function staleAfter(cacheMinutes: number | null | undefined): number {
+  const window = typeof cacheMinutes === 'number' && cacheMinutes > 0
+    ? cacheMinutes
+    : DEFAULT_CACHE_MINUTES
+  return window * 2
+}
 
 function describe(minutes: number): string {
   if (minutes < 1) return 'moments ago'
@@ -33,10 +46,12 @@ function describe(minutes: number): string {
 export function OddsFreshness({
   fetchedAt,
   requestsRemaining,
+  cacheMinutes,
   className,
 }: {
   fetchedAt: string | null
   requestsRemaining?: string | null
+  cacheMinutes?: number | null
   className?: string
 }) {
   // Re-render on a timer so the age stays true while the page is open.
@@ -51,7 +66,7 @@ export function OddsFreshness({
   if (Number.isNaN(fetched.getTime())) return null
 
   const minutes = (now - fetched.getTime()) / 60_000
-  const stale = minutes > STALE_AFTER_MINUTES
+  const stale = minutes > staleAfter(cacheMinutes)
 
   return (
     <span
