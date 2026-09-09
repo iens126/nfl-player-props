@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowTopRightOnSquareIcon } from '@heroicons/react/24/outline'
+import { ArrowTopRightOnSquareIcon, CheckIcon } from '@heroicons/react/24/outline'
 import type { AlternateLine, AlternatesResponse } from '../../api/types'
 import { statLabel } from '../../lib/statLabels'
 import { useTheme } from '../../lib/theme'
@@ -42,6 +42,8 @@ export function LineExplorer({
   onProbabilityFor,
   onRequest,
   requested,
+  currentLine,
+  onUseLine,
 }: {
   alternates: AlternatesResponse | null
   loading: boolean
@@ -51,6 +53,10 @@ export function LineExplorer({
   onProbabilityFor: (line: number) => number | null
   onRequest: () => void
   requested: boolean
+  /** The line the rest of the page is currently working from. */
+  currentLine: number | null
+  /** Move the page to the rung on screen. */
+  onUseLine: (line: number) => void
 }) {
   const { theme } = useTheme()
   const isDark = theme === 'dark'
@@ -136,6 +142,7 @@ export function LineExplorer({
 
   const modelProbability = onProbabilityFor(selected.line)
   const singleRung = lines.length < 2
+  const isCurrent = currentLine !== null && Math.abs(currentLine - selected.line) < 1e-9
 
   return (
     <div className="rounded-2xl border border-border bg-surface p-5">
@@ -165,6 +172,28 @@ export function LineExplorer({
           </p>
         </div>
       </div>
+
+      {/*
+        Without this the ladder is a dead end: a rung a book is genuinely
+        pricing can be read here, but the projection, hit rates and the pick
+        below all stay on whatever number was typed into the prop form. Someone
+        who finds 29.5 on FanDuel and tries to back it is refused, correctly and
+        confusingly, because no book posts the 30 still sitting in the form.
+      */}
+      {isCurrent ? (
+        <p className="mt-4 flex items-center justify-center gap-1.5 rounded-xl border border-border bg-surface-2 px-3 py-2 text-xs font-semibold text-text-muted">
+          <CheckIcon className="h-4 w-4" />
+          The page is on this line
+        </p>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onUseLine(selected.line)}
+          className="mt-4 w-full rounded-xl bg-accent px-3 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-90"
+        >
+          Use {selected.line} for the projection and pick
+        </button>
+      )}
 
       {!singleRung && (
         <>

@@ -544,6 +544,8 @@ export default function Dashboard() {
                     requested={alternates.requested}
                     onRequest={loadAlternates}
                     onProbabilityFor={(line) => alternates.probabilities[line] ?? null}
+                    currentLine={line}
+                    onUseLine={(next) => setLineInput(String(next))}
                   />
                 </div>
               )}

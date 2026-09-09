@@ -96,6 +96,20 @@ def _best_price(books: list[dict], side: str, line: float) -> tuple[int | None, 
     return best if best else (None, None)
 
 
+def _lines_offering(books: list[dict], side: str) -> set[float]:
+    """Every line this side actually has a price at.
+
+    Collected so a refusal can name the nearest number a book will take,
+    rather than leaving the user to guess which of the ladder's rungs exists.
+    """
+    key = f'{side}_price'
+    return {
+        float(entry['line'])
+        for entry in books
+        if entry.get('line') is not None and entry.get(key) is not None
+    }
+
+
 def quote(player: str, team: str, opponent: str, stat: str, side: str, line: float) -> dict:
     """Price a proposed pick, or explain why it can't be taken.
 
@@ -117,28 +131,36 @@ def quote(player: str, team: str, opponent: str, stat: str, side: str, line: flo
 
     event = main.get('event') or {}
     event_id = main.get('event_id')
-    price, book = _best_price(main.get('books', []), side, line)
+    books = main.get('books', [])
+    price, book = _best_price(books, side, line)
     source = 'main'
+    offered = _lines_offering(books, side)
 
     if price is None:
         ladder = odds_api.alternate_lines(event_id, stat, player)
         if ladder['status'] == 'ok':
+            # Every rung is walked rather than stopping at the match, because
+            # the refusal below is far more useful when it can name the nearest
+            # number that does exist — and the ladder has already been paid for
+            # by this point, so the extra pass is free.
             for rung in ladder.get('lines', []):
-                if abs(float(rung['line']) - line) > 1e-9:
-                    continue
-                price, book = _best_price(
-                    [{**b, 'line': rung['line']} for b in rung.get('books', [])], side, line,
-                )
-                source = 'alternate'
-                break
+                rung_books = [{**b, 'line': rung['line']} for b in rung.get('books', [])]
+                offered |= _lines_offering(rung_books, side)
+                if abs(float(rung['line']) - line) < 1e-9:
+                    price, book = _best_price(rung_books, side, line)
+                    source = 'alternate'
 
     if price is None:
         pretty = stat.replace('_', ' ')
-        raise WagerError(
-            'no_line',
-            f'No book is posting {player} {side} {line:g} {pretty} right now. '
-            'Pick a line that appears on the board or in the alternate ladder.',
-        )
+        message = f'No book is posting {player} {side} {line:g} {pretty} right now.'
+        if offered:
+            # Ties go to the lower line, which is the friendlier one to be sent
+            # towards on an over and the honest one on an under.
+            nearest = min(offered, key=lambda candidate: (abs(candidate - line), candidate))
+            message += f' The closest {side} line on offer is {nearest:g}.'
+        else:
+            message += ' Pick a line that appears on the board or in the alternate ladder.'
+        raise WagerError('no_line', message)
 
     return {
         'price': price,

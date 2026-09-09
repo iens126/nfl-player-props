@@ -149,3 +149,60 @@ def test_quote_refuses_a_side_that_is_neither_over_nor_under():
     with pytest.raises(wagers.WagerError) as excinfo:
         _quote(side='maybe')
     assert excinfo.value.code == 'bad_side'
+
+
+def test_quote_names_the_nearest_line_when_it_refuses():
+    # The case from the field: a receiver's main lines sit at 33.5 and 34.5,
+    # the ladder has 29.5, and the user asks for 30 — a number that looks
+    # entirely reasonable and that nobody is offering. Refusing without saying
+    # what *is* on offer leaves them guessing at a ladder they may not have
+    # opened.
+    with mock.patch.object(wagers.odds_api, 'player_prop', return_value=MAIN), \
+         mock.patch.object(wagers.odds_api, 'alternate_lines', return_value=LADDER):
+        with pytest.raises(wagers.WagerError) as excinfo:
+            _quote(line=41.5)
+    assert excinfo.value.code == 'no_line'
+    assert 'closest over line on offer is 40.5' in excinfo.value.message
+
+
+def test_quote_suggests_from_the_main_board_as_well_as_the_ladder():
+    empty = {'status': 'no_market', 'message': 'No alternate ladder.'}
+    with mock.patch.object(wagers.odds_api, 'player_prop', return_value=MAIN), \
+         mock.patch.object(wagers.odds_api, 'alternate_lines', return_value=empty):
+        with pytest.raises(wagers.WagerError) as excinfo:
+            _quote(line=59.5)
+    assert 'closest over line on offer is 60.5' in excinfo.value.message
+
+
+def test_quote_suggestion_respects_the_side():
+    # BetMGM prices 62.5 on both sides but DraftKings' 40.5 ladder rung is the
+    # nearer one; the suggestion must come from lines that price *this* side.
+    one_sided = {
+        'status': 'ok',
+        'lines': [{'line': 45.5, 'books': [{'book': 'DraftKings', 'over_price': -300,
+                                            'under_price': None}]}],
+    }
+    with mock.patch.object(wagers.odds_api, 'player_prop', return_value=MAIN), \
+         mock.patch.object(wagers.odds_api, 'alternate_lines', return_value=one_sided):
+        with pytest.raises(wagers.WagerError) as excinfo:
+            _quote(side='under', line=45.5)
+    # 45.5 has no under price at all, so the suggestion falls back to the board.
+    assert 'closest under line on offer is 60.5' in excinfo.value.message
+
+
+def test_quote_still_prices_a_matching_rung_while_collecting_suggestions():
+    # Walking the whole ladder must not stop it finding the rung it came for.
+    with mock.patch.object(wagers.odds_api, 'player_prop', return_value=MAIN), \
+         mock.patch.object(wagers.odds_api, 'alternate_lines', return_value=LADDER):
+        result = _quote(line=40.5)
+    assert (result['price'], result['book'], result['source']) == (-260, 'DraftKings', 'alternate')
+
+
+def test_quote_falls_back_to_generic_advice_with_nothing_on_offer():
+    bare = {'status': 'ok', 'books': [], 'event_id': 'evt1', 'event': {}}
+    empty = {'status': 'no_market', 'message': 'No alternate ladder.'}
+    with mock.patch.object(wagers.odds_api, 'player_prop', return_value=bare), \
+         mock.patch.object(wagers.odds_api, 'alternate_lines', return_value=empty):
+        with pytest.raises(wagers.WagerError) as excinfo:
+            _quote(line=60.5)
+    assert 'appears on the board or in the alternate ladder' in excinfo.value.message
