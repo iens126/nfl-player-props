@@ -169,6 +169,13 @@ else works normally.
 | `SUPABASE_ANON_KEY` | Optional. Used to verify a user's access token. |
 | `SUPABASE_SERVICE_KEY` | Optional. Writes picks and settlements. **Never expose this to the browser** — it is only ever read by the serverless function and the refresh workflow. |
 
+Only `VITE_`-prefixed variables reach the browser. `frontend/scripts/check-dist-secrets.mjs`
+runs as a `postbuild` step and fails the build if a Supabase secret key or a
+`service_role` JWT ends up in `dist/` — so a secret given a `VITE_` name by
+mistake breaks the deploy instead of shipping. It ignores the bare prefix
+strings that `supabase-js` itself contains, which is why it can be trusted to
+mean something when it does fire.
+
 **Frontend** (`frontend/.env.example`)
 
 | Variable                | Purpose                                                    |
