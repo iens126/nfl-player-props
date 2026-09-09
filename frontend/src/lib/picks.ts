@@ -60,6 +60,29 @@ export function profitFor(stake: number, americanPrice: number): number {
     : stake * (100 / Math.abs(americanPrice))
 }
 
+/**
+ * The settlement rule, in one place.
+ *
+ * Account picks are graded in Python by the nightly job (core/wagers.py), and
+ * a user must never see one answer on their picks page and a different one on
+ * the leaderboard. Both implementations are pinned to the same specification
+ * in grading.fixture.json, which both test suites read.
+ *
+ * A missing result voids rather than losing: a player who was inactive never
+ * had a chance to clear the number, and a sportsbook would refund the ticket.
+ */
+export function settle(
+  side: PickSide, line: number, stake: number, price: number, actual: number | null,
+): { status: PickStatus; actual: number | null; profit: number } {
+  if (actual === null || Number.isNaN(actual)) return { status: 'void', actual: null, profit: 0 }
+  const hit = side === 'over' ? actual >= line : actual < line
+  return {
+    status: hit ? 'hit' : 'miss',
+    actual,
+    profit: hit ? profitFor(stake, price) : -stake,
+  }
+}
+
 /** The probability a price implies, including the book's margin. */
 export function impliedProbability(price: number): number | null {
   if (!Number.isFinite(price) || price === 0) return null
@@ -173,15 +196,8 @@ export function gradePick(pick: SavedPick, games: GameRowLike[], today = new Dat
   }
 
   const value = row[pick.stat]
-  if (typeof value !== 'number' || Number.isNaN(value)) return { ...base, status: 'void' }
-
-  const hit = pick.side === 'over' ? value >= pick.line : value < pick.line
-  return {
-    ...base,
-    status: hit ? 'hit' : 'miss',
-    actual: value,
-    profit: hit ? profitFor(pick.stake, pick.price) : -pick.stake,
-  }
+  const actual = typeof value === 'number' ? value : null
+  return { ...base, ...settle(pick.side, pick.line, pick.stake, pick.price, actual) }
 }
 
 export interface BankrollSummary {
@@ -198,8 +214,17 @@ export interface BankrollSummary {
   staked: number
 }
 
-/** Bankroll and record across a set of graded picks. */
-export function summarise(picks: GradedPick[]): BankrollSummary {
+/**
+ * Bankroll and record across a set of graded picks.
+ *
+ * The opening balance is a parameter because there are two bankrolls with
+ * different sizes: the private one in this browser, and the 100-coin account
+ * bankroll the leaderboard ranks. The arithmetic is identical either way.
+ */
+export function summarise(
+  picks: Pick<GradedPick, 'status' | 'stake' | 'profit'>[],
+  starting = STARTING_BANKROLL,
+): BankrollSummary {
   let profit = 0
   let atRisk = 0
   let staked = 0
@@ -216,7 +241,7 @@ export function summarise(picks: GradedPick[]): BankrollSummary {
   }
 
   const settled = count.hit + count.miss
-  const balance = STARTING_BANKROLL + profit
+  const balance = starting + profit
   return {
     balance,
     atRisk,

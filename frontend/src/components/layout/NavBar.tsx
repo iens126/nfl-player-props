@@ -3,11 +3,13 @@ import { NavLink } from 'react-router-dom'
 import { Bars3Icon, XMarkIcon, ChartBarSquareIcon, SunIcon, MoonIcon } from '@heroicons/react/24/outline'
 import clsx from 'clsx'
 import { useTheme } from '../../lib/theme'
+import { AccountMenu } from './AccountMenu'
 
 const LINKS = [
   { to: '/', label: 'Dashboard' },
   { to: '/odds', label: 'Odds Board' },
   { to: '/picks', label: 'My Picks' },
+  { to: '/leaderboard', label: 'Leaderboard' },
   { to: '/methodology', label: 'Methodology' },
 ]
 
@@ -46,6 +48,8 @@ export function NavBar() {
         </nav>
 
         <div className="flex items-center gap-1">
+          <AccountMenu />
+
           <button
             onClick={toggle}
             className="rounded-lg p-2 text-text-muted transition-colors hover:bg-surface-2 hover:text-text"

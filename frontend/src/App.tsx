@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router-dom'
 import { NavBar } from './components/layout/NavBar'
 import { Footer } from './components/layout/Footer'
 import Dashboard from './pages/Dashboard'
+import Leaderboard from './pages/Leaderboard'
 import Methodology from './pages/Methodology'
 import MyPicks from './pages/MyPicks'
 import OddsBoard from './pages/OddsBoard'
@@ -15,6 +16,7 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/odds" element={<OddsBoard />} />
           <Route path="/picks" element={<MyPicks />} />
+          <Route path="/leaderboard" element={<Leaderboard />} />
           <Route path="/methodology" element={<Methodology />} />
         </Routes>
       </main>

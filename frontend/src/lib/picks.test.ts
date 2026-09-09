@@ -6,8 +6,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_PRICE, STARTING_BANKROLL, gradePick, impliedProbability,
-  profitFor, summarise, type GradedPick, type SavedPick,
+  profitFor, settle, summarise, type GradedPick, type PickSide, type SavedPick,
 } from './picks'
+import spec from './grading.fixture.json'
 
 const basePick = (over: Partial<SavedPick> = {}): SavedPick => ({
   id: 'p1', player: 'Malik Nabers', team: 'NYG', opponent: 'BAL',
@@ -137,5 +138,16 @@ describe('bankroll', () => {
     const s = summarise(heavy)
     expect(s.winRate).toBeCloseTo(0.92, 6)
     expect(s.roi!).toBeLessThan(0.01)   // a 92% record worth well under 1% ROI
+  })
+})
+
+describe('the shared settlement specification', () => {
+  // core/wagers.py settles account picks for the leaderboard; this settles the
+  // ones in the browser. Both read this file, so neither can quietly drift into
+  // grading the same result differently. tests/test_wagers.py is the twin.
+  it.each(spec.cases)('$name', (c) => {
+    const result = settle(c.side as PickSide, c.line, c.stake, c.price, c.actual)
+    expect(result.status).toBe(c.status)
+    expect(result.profit).toBeCloseTo(c.profit, 2)
   })
 })

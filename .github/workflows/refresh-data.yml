@@ -71,11 +71,25 @@ jobs:
           python scripts/check_bundle.py frontend/public/data \
             --compare-metrics /tmp/manifest-before.json
 
+      # After the bundle, so ranked picks settle against exactly the data the
+      # site is about to serve — a user must never see one result on their
+      # picks page and a different one on the leaderboard.
+      #
+      # No `if:` guard: the script exits cleanly when the secrets are absent,
+      # which is the no-accounts setup, and a step-level condition could only
+      # test for them by hoisting the service key to job scope.
+      - name: Settle account picks
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python scripts/settle_picks.py --bundle frontend/public/data
+
       - name: Verify the browser engine still matches Python
         run: |
           cd frontend
           npm ci
-          npx vitest run src/engine --reporter=dot
+          npx vitest run src/engine src/lib --reporter=dot
 
       - name: Commit the refreshed bundle
         run: |

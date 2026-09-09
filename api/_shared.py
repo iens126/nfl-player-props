@@ -25,16 +25,38 @@ def query(handler: BaseHTTPRequestHandler) -> dict:
     return {key: values[0] for key, values in raw.items() if values}
 
 
-def respond(handler: BaseHTTPRequestHandler, payload: dict, status: int = 200) -> None:
+# Odds are cached upstream for ODDS_CACHE_MINUTES; a short edge cache keeps
+# repeated page loads from spending API credits.
+ODDS_CACHE = 'public, max-age=60, stale-while-revalidate=300'
+
+# Anything account-specific must never touch a shared cache.
+NO_CACHE = 'private, no-store'
+
+
+def respond(handler: BaseHTTPRequestHandler, payload: dict, status: int = 200,
+            cache: str = ODDS_CACHE) -> None:
     body = json.dumps(payload).encode()
     handler.send_response(status)
     handler.send_header('Content-Type', 'application/json')
     handler.send_header('Content-Length', str(len(body)))
-    # Odds are cached upstream for ODDS_CACHE_MINUTES; a short edge cache keeps
-    # repeated page loads from spending API credits.
-    handler.send_header('Cache-Control', 'public, max-age=60, stale-while-revalidate=300')
+    handler.send_header('Cache-Control', cache)
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def body(handler: BaseHTTPRequestHandler) -> dict:
+    """Parse a JSON request body, or {} if there isn't a usable one."""
+    try:
+        length = int(handler.headers.get('Content-Length') or 0)
+    except ValueError:
+        return {}
+    if length <= 0:
+        return {}
+    try:
+        parsed = json.loads(handler.rfile.read(length).decode())
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def missing(handler: BaseHTTPRequestHandler, *names: str) -> list[str]:

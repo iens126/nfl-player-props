@@ -1,0 +1,45 @@
+{
+  "_comment": "The settlement rules, written once and asserted from both sides. core/wagers.py grades account picks in the nightly job; picks.ts grades local ones in the browser. A user must never see one answer on their picks page and a different one on the leaderboard, so both test suites read this file: tests/test_wagers.py and src/lib/picks.test.ts. Add a case here before changing either implementation.",
+  "cases": [
+    {
+      "name": "over clears the line",
+      "side": "over", "line": 60.5, "actual": 74, "stake": 10, "price": -110,
+      "status": "hit", "profit": 9.09
+    },
+    {
+      "name": "over exactly on a whole line counts as a hit",
+      "side": "over", "line": 60, "actual": 60, "stake": 10, "price": -110,
+      "status": "hit", "profit": 9.09
+    },
+    {
+      "name": "over falls short",
+      "side": "over", "line": 60.5, "actual": 41, "stake": 10, "price": -110,
+      "status": "miss", "profit": -10
+    },
+    {
+      "name": "under stays below the line",
+      "side": "under", "line": 60.5, "actual": 41, "stake": 25, "price": -250,
+      "status": "hit", "profit": 10
+    },
+    {
+      "name": "under exactly on a whole line loses",
+      "side": "under", "line": 60, "actual": 60, "stake": 25, "price": -250,
+      "status": "miss", "profit": -25
+    },
+    {
+      "name": "a longshot pays the plus price",
+      "side": "over", "line": 99.5, "actual": 112, "stake": 10, "price": 200,
+      "status": "hit", "profit": 20
+    },
+    {
+      "name": "no stat line voids rather than losing",
+      "side": "over", "line": 60.5, "actual": null, "stake": 10, "price": -110,
+      "status": "void", "profit": 0
+    },
+    {
+      "name": "a zero stat line is a real result, not a void",
+      "side": "under", "line": 0.5, "actual": 0, "stake": 5, "price": 150,
+      "status": "hit", "profit": 7.5
+    }
+  ]
+}

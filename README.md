@@ -24,6 +24,8 @@ Pick a player and an opponent, and GridEdge shows:
 - **Hit rates** — how often the player has actually cleared that line, over the last 3/5/10 games, this season, and their whole career
 - **Odds Board** — a plain list of DraftKings/FanDuel/BetMGM/Caesars lines for a whole game; click any row to open that player's history and projection (needs a free API key; see below)
 - **Model transparency** — every model explains what it looks at in plain language and links out to a description of the technique; the trained model reports its own measured accuracy on a season it never saw
+- **Pick tracking** — stake imaginary coins on any line and watch it settle itself from the game data, privately in your browser
+- **Leaderboard** — with an account, picks are priced off the live board, lock at kickoff, and rank against everyone else's on hits and on return. Signing up takes a username and a password — no email, no phone number, nothing else (optional; see below)
 
 ## Architecture: there is no analytics server
 
@@ -38,8 +40,14 @@ does the joins and arithmetic itself.
               (pandas, model training)     ~670 KB gzip       (projection maths)
 
                                           /api/odds*  ◀────── live odds only
-                                          (serverless, needs a secret key)
+                                          /api/picks* ◀────── ranked picks
+                                          (serverless, need secret keys)
 ```
+
+Accounts and the leaderboard are an **optional layer on top of this**, not a
+change to it: without a Supabase project the site is the static app described
+above, and picks stay private to the browser. See
+[Accounts and the leaderboard](#accounts-and-the-leaderboard-optional).
 
 Why this shape:
 
@@ -80,21 +88,28 @@ mirror it in TypeScript until the fixtures pass again.
 - **Build-time API:** FastAPI in `backend/`, used by the precompute script
 - **Data source:** [nflverse](https://github.com/nflverse) via `nflreadpy` (eight seasons)
 - **Odds:** [The Odds API](https://the-odds-api.com) (optional, free tier)
+- **Accounts:** [Supabase](https://supabase.com) — Postgres, auth and row-level
+  security (optional, free tier). Writes go through one serverless function and
+  two `SECURITY DEFINER` functions; the browser has no `INSERT` grant.
 
 ## Project structure
 
 ```
 core/                analytics engine — data loading, stability, defense
-                     analysis, projection models, trained model, odds client
+                     analysis, projection models, trained model, odds client;
+                     accounts.py holds the username/recovery-code rules
 backend/             FastAPI app; now a build-time library, not a service
 scripts/
   precompute.py      builds the static bundle + parity fixtures
   check_bundle.py    sanity + model-regression guards for CI
-api/                 Vercel serverless functions (live odds only)
+  settle_picks.py    settles ranked picks after games are played
+api/                 Vercel serverless functions (live odds; accounts; ranked picks)
+supabase/schema.sql  accounts, picks and leaderboard — optional, see below
 frontend/
   src/engine/        the browser-side maths, ported from core/
   public/data/       the generated bundle (committed, served by the CDN)
-tests/               Python suites: projection maths, ML model, odds, CORS
+tests/               Python suites: projection maths, ML model, odds, accounts,
+                     wagers, CORS
 .github/workflows/   scheduled data refresh
 vercel.json          static hosting + serverless function config
 ```
@@ -150,12 +165,17 @@ else works normally.
 | `ODDS_API_KEY` | Optional. Enables the Odds Board and per-player lines — free key at [the-odds-api.com](https://the-odds-api.com). Set it in the Vercel dashboard. |
 | `ODDS_CACHE_MINUTES` | Optional (default 10). How long odds are cached; higher spends fewer API credits |
 | `CAREER_SEASONS` | Optional (default 8). Seasons of history the precompute loads |
+| `SUPABASE_URL` | Optional. Enables accounts and the leaderboard. Also needed as a GitHub Actions secret, for settlement. |
+| `SUPABASE_ANON_KEY` | Optional. Used to verify a user's access token. |
+| `SUPABASE_SERVICE_KEY` | Optional. Writes picks and settlements. **Never expose this to the browser** — it is only ever read by the serverless function and the refresh workflow. |
 
 **Frontend** (`frontend/.env.example`)
 
 | Variable                | Purpose                                                    |
 | ----------------------- | ---------------------------------------------------------- |
-| `VITE_ODDS_BASE_URL`    | Optional. Where the odds functions live; empty means same-origin `/api`, which is what you want on Vercel. |
+| `VITE_ODDS_BASE_URL`    | Optional. Where the serverless functions live; empty means same-origin `/api`, which is what you want on Vercel. |
+| `VITE_SUPABASE_URL`     | Optional. Turns on accounts and the leaderboard. |
+| `VITE_SUPABASE_ANON_KEY`| Optional. Safe in the browser: every table is behind row-level security and none grants `INSERT`. |
 
 There is no `CORS_ORIGINS` any more: the data is same-origin static files, and
 the odds functions are served from the same domain as the app.
@@ -264,6 +284,163 @@ The comparison shown is the model's over probability against the book's
 two sides of a market sum to over 100%; the app says so, and refuses to compare
 against a book that is pricing a different number than the one you entered.
 
+## Accounts and the leaderboard (optional)
+
+Without a Supabase project, GridEdge works exactly as it always has: picks are
+saved in your browser, graded locally, and shown on **My Picks**. Add one and
+the app grows a second, public layer — accounts, ranked picks and a leaderboard
+— while the private tracker stays exactly where it was.
+
+### Signing up asks for a username and a password
+
+That is the whole of it. No email address, no phone number, no "continue with
+GitHub" handing over a real name and an avatar. The record an account leaves
+behind is exactly this:
+
+```
+profiles: (id, username, created_at)
+```
+
+The username is public — it is the first column of the leaderboard — and there
+is nothing else, because nothing else was ever collected.
+
+Supabase's auth service will not hold a password account without an identifier
+and accepts only an email or a phone, so GridEdge synthesises one from the
+username:
+
+```
+gridiron_ghost  ->  gridiron_ghost@users.gridedge.invalid
+```
+
+`.invalid` is reserved by RFC 2606 and can never resolve. The address is a
+primary key wearing a costume; no bug or misconfiguration can turn it into
+mail sent to a real person, and `tests/test_accounts.py` asserts as much.
+
+**The cost: there is no password reset.** With no address on file there is
+nowhere to send one. Instead each account is issued a **recovery code** at
+registration — 20 characters, ~98 bits, shown once and stored only as a
+SHA-256 hash. It is the only way back into an account whose password is
+forgotten, and nobody can look it up: not support, not whoever runs the
+database. The sign-up panel says so before the user clicks away.
+
+Using a recovery code sets a new password and issues a fresh code, so
+finishing a recovery never leaves an account with no way back in.
+
+Two consequences worth knowing:
+
+- **Usernames are immutable.** The username is half the sign-in identifier, so
+  renaming would lock the user out. `profiles` grants the browser no `UPDATE`.
+- **What is still logged is infrastructure, not the app.** Supabase records IP
+  addresses in `auth.sessions` and `auth.audit_log_entries`, and Vercel logs
+  request IPs for the serverless functions. Neither is something the schema
+  controls, and neither is anything the app reads. "No personal data the user
+  typed" is achievable and achieved; "no IP ever touches a log" is not.
+
+### What the leaderboard ranks
+
+Everyone opens with **100 imaginary coins** and stakes them on any line they
+like. Two columns are sortable, on purpose:
+
+- **Hits** — how often you were right. Rewards volume and discipline.
+- **Return** — profit measured against coins staked. Rewards being right when
+  it paid, so one brave longshot can take the top spot from a standing start.
+
+They reward opposite instincts, which is the point: a grinder taking heavy
+favourites can lead on hits while quietly losing coins, and a player with a
+single 20-to-1 winner can lead on return having barely picked at all. Ranking
+only one of them would make the other way of playing pointless.
+
+Return needs **25 coins staked in settled picks** before it is ranked. Without
+a floor, a 1-coin flier at +2000 is a 2000% return that risked nothing and
+would sit at the top all season. The floor is on coins staked rather than picks
+made, which is the distinction that matters — one genuinely large bet still
+qualifies.
+
+### Why a pick has to go through the server
+
+The private tracker lets you type any line at any price. That is harmless while
+the bankroll is yours alone, and useful — you can record a number you got at a
+book this app doesn't cover.
+
+The moment picks are ranked against other people, those same two fields become
+the entire attack surface. "Over 0.5 receiving yards at +2000" wins every week.
+So a ranked pick takes a different route:
+
+```
+  browser ──▶ POST /api/picks/create ──▶ place_pick()  ──▶ picks
+              │                          (Postgres)
+              │  1. who is this?              4. do they have the coins?
+              │  2. is a book posting          (checked and spent in one
+              │     this exact line?            transaction, so two requests
+              │  3. has kickoff passed?         can't spend the same 100)
+              ▼
+         core/odds.py — the live board
+```
+
+Steps 2 and 3 read one response from the odds provider, so the price and the
+deadline can never disagree, and the price the client *thought* it was taking
+is never even read. The browser holds no `INSERT` grant on any table; the only
+two ways in are `place_pick()` and `settle_pick()`, and both enforce their own
+rules.
+
+Balances are not stored either. A bankroll is 100 coins plus the profit on
+everything settled, recomputed from the picks themselves. Regrading a game is
+therefore safe: run it twice and the answer is identical, and a bad settlement
+is fixed by correcting one row rather than unwinding a running total.
+
+### Settlement
+
+`scripts/settle_picks.py` runs as a step in the daily refresh, straight after
+the bundle is rebuilt — so ranked picks are graded from exactly the JSON the
+site is about to serve, and nobody sees one result on their picks page and a
+different one on the board.
+
+A pick **voids and returns its stake** if the player didn't record a stat line,
+the way a sportsbook would rather than scoring it a loss. Telling that apart
+from "nflverse hasn't published yet" is the job's one piece of real judgement:
+a missing line waits 48 hours before it voids.
+
+The grading rule itself lives in two languages — `core/wagers.py` for ranked
+picks, `frontend/src/lib/picks.ts` for local ones — pinned to a shared
+specification in `frontend/src/lib/grading.fixture.json` that both test suites
+read. Change one without the other and CI fails.
+
+### Setting it up
+
+1. Create a project at [supabase.com](https://supabase.com) (free tier is plenty).
+2. Open the **SQL Editor**, paste `supabase/schema.sql`, and run it. It is
+   re-runnable, so applying it again after an edit is safe.
+3. Under **Authentication**, leave the **Email** provider enabled (it is what
+   backs password sign-in) and turn **two things off**:
+
+   - **"Allow new users to sign up"** — accounts are created by
+     `api/account/register.py` through the admin API, which is not affected by
+     this setting. Turning it off closes the public sign-up endpoint that the
+     anon key can otherwise reach, so the register function becomes the only
+     way an account can come into existence — and therefore the only way a
+     username can be checked and a profile created alongside it.
+   - **"Confirm email"** — belt and braces. Registration marks its users
+     confirmed as it creates them, so this changes nothing on the happy path,
+     but it means no path anywhere tries to post mail to a `.invalid` address.
+
+   No other provider is needed, and there is no redirect allow-list to
+   configure: nothing in this app leaves the page to sign in.
+4. In Vercel, set `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`,
+   `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. Redeploy.
+5. In the repo's **Settings → Secrets → Actions**, add `SUPABASE_URL`,
+   `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_KEY` so the refresh workflow can
+   settle picks.
+
+To check settlement before trusting it with real picks:
+
+```bash
+python scripts/settle_picks.py --bundle frontend/public/data --dry-run
+```
+
+Note that ranked picks need `ODDS_API_KEY` as well — a pick can only be taken
+on a line a book is actually posting, so without live odds there is nothing to
+validate against.
+
 ## Tests
 
 The projection maths has a test suite covering the properties that make a
@@ -275,7 +452,23 @@ evidence, and no crashes on degenerate windows (a single game, all zeros).
 backend/.venv/bin/python tests/test_projection_models.py   # distribution maths
 backend/.venv/bin/python tests/test_ml_model.py            # trained model + hit rates
 backend/.venv/bin/python tests/test_odds.py                # sportsbook client
+pytest tests/test_wagers.py tests/test_settle_picks.py     # ranked picks
+pytest tests/test_accounts.py                             # usernames, recovery codes
 ```
+
+The pick tests cover the two places a leaderboard goes wrong. `test_wagers.py`
+pins the refusals — a line no book posts, a side no book prices, a price
+borrowed from a different line — and asserts the settlement rules against the
+same fixture the browser suite reads. `test_settle_picks.py` covers the
+settlement job's two traps: an 8:20pm Eastern kickoff is already tomorrow in
+UTC, and a missing stat line means "didn't play" only after nflverse has had
+time to publish.
+
+`test_accounts.py` guards the identity rules, and one property above all: that
+no username can produce an address which reaches a real person. It also pins
+the recovery-code handling — that a code never appears in its own hash, that a
+code retyped in lower case or without its dashes still works, and that an
+account with no recovery row cannot be opened by sending nothing at all.
 
 The odds tests use a recorded response shape, so they cover the parsing,
 player matching and every degraded path without needing a key or a network
@@ -360,3 +553,15 @@ Things worth knowing:
 - The projection model is intentionally simple (see Methodology in-app for
   the full explanation) and does not account for injuries, weather, game
   script, or other real-world factors.
+- **The leaderboard is not sybil-resistant.** One person with several email
+  addresses is several accounts. OAuth-only sign-in raises the cost, but
+  nothing here makes it impossible; it is a game among people who want to play
+  it, not a contest with a prize.
+- **Ranked picks spend odds-API credits.** Each submission checks the live
+  board, and the free tier is 500 credits a month. The ten-minute cache in
+  `core/odds.py` absorbs repeat lookups on the same game and market, but a busy
+  Sunday morning could still exhaust it — raise `ODDS_CACHE_MINUTES` or move to
+  a paid plan before opening it up widely.
+- **Settlement follows the daily refresh, not the final whistle.** nflverse
+  publishes a day or two behind, so a Sunday game usually settles Monday
+  morning and a Monday night game on Wednesday.
