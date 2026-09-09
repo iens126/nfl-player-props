@@ -84,11 +84,32 @@ describe('autoFillOpponent', () => {
   })
 
   it('drops the pin once a different player is selected', () => {
-    // The choice was about Darnold. It says nothing about Lamb.
+    // The choice was about Darnold. It says nothing about Lamb — and the pin
+    // has to clear, not just be ignored: the opponent now on screen came from
+    // the fixture list, so nobody chose it.
     const r = autoFillOpponent({
       pin: 'Sam Darnold', ...lamb, schedule, opponent: 'GB',
     })
-    expect(r).toEqual({ opponent: 'NYG', pin: 'Sam Darnold' })
+    expect(r).toEqual({ opponent: 'NYG', pin: null })
+  })
+
+  it('re-fills when returning to a player whose pin was already spent', () => {
+    // The regression this cost a deploy to find. Pin Minnesota to Lamb, look
+    // at a Seahawk, come back: Lamb must be against the Giants again, not left
+    // on the defense that was filled in for somebody else.
+    let pin: OpponentPin = 'CeeDee Lamb'
+    let opponent: string | null = 'MIN'
+
+    let r = autoFillOpponent({ pin, ...lamb, schedule, opponent })
+    expect(r.opponent).toBe('MIN')
+    ;({ pin, opponent } = r)
+
+    r = autoFillOpponent({ pin, ...darnold, schedule, opponent })
+    expect(r.opponent).toBe('NE')
+    ;({ pin, opponent } = r)
+
+    r = autoFillOpponent({ pin, ...lamb, schedule, opponent })
+    expect(r.opponent).toBe('NYG')
   })
 
   it('carries a swapped-in defense to the next player chosen', () => {
@@ -147,5 +168,10 @@ describe('autoFillOpponent', () => {
     // Back to the Seahawk -> his fixture, not the Cowboy's choice.
     r = autoFillOpponent({ pin, ...darnold, schedule, opponent })
     expect(r.opponent).toBe('NE')
+    ;({ pin, opponent } = r)
+
+    // And back to the Cowboy -> his own fixture again, not the Seahawk's.
+    r = autoFillOpponent({ pin, ...lamb, schedule, opponent })
+    expect(r.opponent).toBe('NYG')
   })
 })

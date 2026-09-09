@@ -80,8 +80,15 @@ export function autoFillOpponent(input: {
 
   const next = nextOpponentFor(schedule, team)
 
+  // The pin is dropped, not carried. Whatever opponent ends up selected here
+  // was chosen by the fixture list, so it belongs to nobody — and leaving the
+  // old name on it means returning to that player later reads their pin as
+  // still standing, over an opponent they never picked. Going Lamb (pin MIN)
+  // -> Darnold (fills NE) -> Lamb would then keep NE, quietly showing a
+  // Cowboy against New England.
+  //
   // A bye — or out of season, when nobody has a fixture inside the horizon —
   // leaves whatever is already selected. Clearing it would empty the page in
   // exactly the months when the user has to choose a matchup by hand anyway.
-  return { opponent: next ?? opponent, pin }
+  return { opponent: next ?? opponent, pin: null }
 }
