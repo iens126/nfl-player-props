@@ -158,3 +158,28 @@ def delete_user(user_id: str) -> tuple[int, dict]:
     in auth.users where nothing in this app can see or clean it up.
     """
     return _admin('DELETE', f'/auth/v1/admin/users/{user_id}', {})
+
+
+def upsert(table: str, row: dict, on_conflict: str) -> tuple[int, object]:
+    """Insert a row, replacing any that collides on `on_conflict`.
+
+    PostgREST needs both the conflict target and the merge preference; without
+    them a repeat write is a duplicate-key error rather than an update, which
+    for a cache means every snapshot after the first is silently lost.
+    """
+    request = urllib.request.Request(
+        f'{URL}/rest/v1/{table}?on_conflict={on_conflict}',
+        data=json.dumps(row).encode(),
+        headers={
+            'apikey': SERVICE_KEY,
+            'Authorization': f'Bearer {SERVICE_KEY}',
+            'Content-Type': 'application/json',
+            'Prefer': 'resolution=merge-duplicates,return=minimal',
+        },
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+            return response.status, {}
+    except urllib.error.HTTPError as exc:
+        return exc.code, {'message': exc.read().decode() or ''}

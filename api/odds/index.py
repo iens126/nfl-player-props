@@ -8,6 +8,9 @@ from api._shared import query, respond
 class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         from core import odds as odds_api
+        from api import _odds_store
+
+        _odds_store.install()
 
         params = query(self)
         required = ['player', 'team', 'opponent', 'stat']

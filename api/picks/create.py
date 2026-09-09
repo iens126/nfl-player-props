@@ -46,6 +46,9 @@ def _fail(handler, status, message, code='error'):
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802 - BaseHTTPRequestHandler's naming
         from core.wagers import WagerError, quote
+        from api import _odds_store
+
+        _odds_store.install()
 
         if not supabase.configured():
             _fail(self, 503, 'Accounts are not configured on this deployment.', 'not_configured')

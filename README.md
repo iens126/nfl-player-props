@@ -164,6 +164,7 @@ else works normally.
 | -------------- | ------------------------------------------------------------------------ |
 | `ODDS_API_KEY` | Optional. Enables the Odds Board and per-player lines — free key at [the-odds-api.com](https://the-odds-api.com). Set it in the Vercel dashboard. |
 | `ODDS_CACHE_MINUTES` | Optional (default 10). How long odds are cached; higher spends fewer API credits |
+| `ODDS_RESERVE_CREDITS` | Optional (default 50). Below this many credits left, browsing serves snapshots and the remainder is kept for pricing picks |
 | `CAREER_SEASONS` | Optional (default 8). Seasons of history the precompute loads |
 | `SUPABASE_URL` | Optional. Enables accounts and the leaderboard. Also needed as a GitHub Actions secret, for settlement. |
 | `SUPABASE_ANON_KEY` | Optional. Used to verify a user's access token. |
@@ -285,6 +286,42 @@ Player props are billed **per event per market**, so responses are cached for
 `ODDS_CACHE_MINUTES` (default 10) and only the market currently on screen is
 ever requested. Without a key nothing breaks — the panel explains that it is
 unconfigured.
+
+### Making 500 credits a month last
+
+The cache in `core/odds.py` is a dict in the process, and these functions run
+as serverless handlers — so most requests get a cold process with an empty
+cache, and the ten-minute window only helps the ones that happen to land on a
+warm instance. Every other request pays a credit for a response the service
+already had. Left alone, a free key is gone in a fortnight.
+
+Two things fix that, both optional and both switched on by the Supabase project
+that already backs accounts:
+
+**Snapshots outlive the process.** Every billed response is written to
+`odds_snapshots` and read back on the next request, so a board a dozen people
+open costs one credit rather than a dozen. `fetched_at` is now the moment the
+provider was asked rather than the moment the response was assembled, so a
+snapshot served an hour later says so on screen instead of claiming to be
+fresh. The provider's terms permit storing and displaying their data; what they
+forbid is redistributing it as a data product, which is why nobody but the
+service key can read that table.
+
+**A reserve is kept for pricing.** The credit count the provider returns in
+`x-requests-remaining` is recorded in `odds_budget`. Below `ODDS_RESERVE_CREDITS`
+(default 50) browsing stops spending and serves whatever snapshot it has,
+labelled with its age; if it has none, the panel says odds are paused. Placing a
+pick still goes live, always — that call is marked `essential`, because a pick
+priced off a stale line is a bet the book is no longer offering, which is the
+hole `core/wagers.py` exists to close.
+
+The asymmetry is the point: browsing is elastic and expensive (a week's board is
+16 games × 11 markets = 176 credits), while pricing a pick is rare and costs
+one or two. So browsing is what gives way.
+
+If the quota does run out entirely, the private pick tracker is unaffected — it
+needs no odds at all, since users name their own line and price and settlement
+comes from the nflverse bundle. Only ranked picks require a live board.
 
 The comparison shown is the model's over probability against the book's
 *implied* probability. Implied probability includes the book's margin, so the

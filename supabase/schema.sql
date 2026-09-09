@@ -134,6 +134,32 @@ create table if not exists public.settlements (
   graded_at  timestamptz not null default now()
 );
 
+-- Sportsbook responses, kept so the same credit is not spent twice.
+--
+-- These functions run as serverless handlers, so the in-process cache in
+-- core/odds.py starts empty on most requests and the ten-minute window rarely
+-- gets a chance to help. Persisting the responses is what makes it real: 500
+-- credits a month is ample when a board everyone is looking at costs one
+-- credit rather than one per cold start.
+--
+-- `key` is the cache key from core/odds.py ("props:<event>:<market>"), and the
+-- payload is that call's response as fetched. Written only by the serverless
+-- functions with the service key; nobody else may read it, because it is the
+-- provider's data and redistributing it is what their terms forbid.
+create table if not exists public.odds_snapshots (
+  key         text primary key,
+  payload     jsonb not null,
+  fetched_at  timestamptz not null default now()
+);
+
+-- How many credits the provider says are left this billing period, so the
+-- reserve in core/odds.py survives a cold start. One row, always.
+create table if not exists public.odds_budget (
+  id          integer primary key default 1 check (id = 1),
+  remaining   integer,
+  seen_at     timestamptz not null default now()
+);
+
 -- ---------------------------------------------------------------------------
 -- Row-level security
 --
@@ -146,6 +172,8 @@ alter table public.profiles    enable row level security;
 alter table public.picks       enable row level security;
 alter table public.settlements enable row level security;
 alter table public.recovery    enable row level security;
+alter table public.odds_snapshots enable row level security;
+alter table public.odds_budget    enable row level security;
 
 -- Table privileges gate whether a role may attempt a statement at all; the
 -- policies below decide which rows it then sees. Both are needed, and being
@@ -160,7 +188,8 @@ grant select on public.profiles, public.picks, public.settlements
 -- Nor may it rename: the username is half the sign-in identifier (see
 -- core/accounts.py), and a rename that didn't also move the auth address
 -- would lock the user out of their own account.
-grant all on public.profiles, public.picks, public.settlements, public.recovery
+grant all on public.profiles, public.picks, public.settlements, public.recovery,
+             public.odds_snapshots, public.odds_budget
   to service_role;
 
 drop policy if exists profiles_read       on public.profiles;
@@ -173,8 +202,10 @@ drop policy if exists profiles_update_own on public.profiles;
 create policy profiles_read on public.profiles
   for select using (true);
 
--- recovery gets no policies whatsoever. service_role bypasses RLS; everyone
--- else is denied by having none to satisfy.
+-- recovery, odds_snapshots and odds_budget get no policies whatsoever.
+-- service_role bypasses RLS; everyone else is denied by having none to satisfy.
+-- For the odds tables that is a licensing matter as much as a security one:
+-- the provider permits storing and displaying their data, not serving it on.
 
 drop policy if exists picks_read on public.picks;
 

@@ -156,7 +156,13 @@ export interface BookLine {
   last_update: string | null
 }
 
-export type OddsStatus = 'ok' | 'not_configured' | 'no_market' | 'no_event' | 'error'
+/**
+ * `conserving` means the credit reserve has been reached: browsing stops
+ * spending so that placing a pick — the one call that must be priced live —
+ * still can. Panels render the message like any other non-ok status.
+ */
+export type OddsStatus =
+  | 'ok' | 'not_configured' | 'no_market' | 'no_event' | 'error' | 'conserving'
 
 export interface OddsResponse {
   status: OddsStatus

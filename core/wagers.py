@@ -125,7 +125,9 @@ def quote(player: str, team: str, opponent: str, stat: str, side: str, line: flo
     if side not in ('over', 'under'):
         raise WagerError('bad_side', "A pick must be 'over' or 'under'.")
 
-    main = odds_api.player_prop(player, team, opponent, stat)
+    # essential: a pick priced off a stale line is a bet the book is no
+    # longer offering, which is the hole this whole module exists to close.
+    main = odds_api.player_prop(player, team, opponent, stat, essential=True)
     if main['status'] != 'ok':
         raise WagerError(main['status'], main.get('message', 'No line available for that pick.'))
 
@@ -137,7 +139,7 @@ def quote(player: str, team: str, opponent: str, stat: str, side: str, line: flo
     offered = _lines_offering(books, side)
 
     if price is None:
-        ladder = odds_api.alternate_lines(event_id, stat, player)
+        ladder = odds_api.alternate_lines(event_id, stat, player, essential=True)
         if ladder['status'] == 'ok':
             # Every rung is walked rather than stopping at the match, because
             # the refusal below is far more useful when it can name the nearest

@@ -118,6 +118,64 @@ def abbr_for_team_name(name: str | None) -> str | None:
 
 _cache: dict[str, tuple[float, object]] = {}
 
+# ---------------------------------------------------------------------------
+# The credit budget, and where snapshots live
+# ---------------------------------------------------------------------------
+
+# Below this many credits, browsing stops spending and serves whatever snapshot
+# it has. Pricing a pick still goes live: it is rare, it is the one call that
+# must not be wrong — a stale line is a bet the book is no longer offering —
+# and holding credits back for it is the entire point of a reserve.
+RESERVE_CREDITS = int(os.environ.get("ODDS_RESERVE_CREDITS", "50"))
+
+
+class Conserving(Exception):
+    """Raised instead of spending one of the last credits on a browsing call."""
+
+
+class _NoStore:
+    """No Supabase project: exactly the behaviour this module always had."""
+
+    def get(self, key: str): return None
+    def put(self, key: str, value: object, fetched_at: float) -> None: pass
+    def remaining(self) -> int | None: return None
+    def record_remaining(self, value) -> None: pass
+
+
+_store: object = _NoStore()
+
+
+def set_store(store) -> None:
+    """Install a store that outlives the process.
+
+    The dict above is close to useless in production and it is worth being
+    blunt about why. These functions run as serverless handlers, so most
+    requests get a cold process with an empty cache; the ten-minute window only
+    ever helps the requests that happen to land on a warm instance. Every other
+    one pays a credit for a response the service already had.
+
+    Persisting the same responses turns a cache that mostly misses into one
+    that mostly hits, which is the difference between 500 credits a month being
+    ample and being gone inside a fortnight. The provider's terms permit
+    storing their data; what they forbid is redistributing it as a data
+    product, which this is not.
+
+    Optional, like everything else here that wants Supabase.
+    """
+    global _store
+    _store = store
+
+
+def credits_remaining() -> int | None:
+    """Credits left this billing period, as last reported by the provider."""
+    return _store.remaining()
+
+
+def conserving() -> bool:
+    """Whether the reserve has been reached and browsing should stop spending."""
+    left = credits_remaining()
+    return left is not None and left <= RESERVE_CREDITS
+
 
 def api_key() -> str | None:
     key = os.environ.get(ODDS_API_KEY_ENV, "").strip()
@@ -128,14 +186,48 @@ def is_configured() -> bool:
     return api_key() is not None
 
 
-def _cached(key: str, loader):
-    entry = _cache.get(key)
+def _cached(key: str, loader, essential: bool = False):
+    """Read through memory, then the store, then the provider.
+
+    Returns (value, fetched_at). The timestamp is when the provider was asked,
+    not when this returned — a snapshot handed back an hour later has to report
+    its real age, or the freshness line on screen becomes a lie exactly when it
+    matters most.
+
+    `essential` marks a call that must not be served stale and must not be
+    refused: pricing a pick. Everything else is browsing, and browsing is what
+    gives way when the reserve is reached.
+    """
     now = time.time()
-    if entry is not None and (now - entry[0]) < CACHE_MINUTES * 60:
-        return entry[1]
+    fresh_for = CACHE_MINUTES * 60
+
+    entry = _cache.get(key)
+    if entry is not None and (now - entry[0]) < fresh_for:
+        return entry[1], entry[0]
+
+    stale = entry
+    stored = _store.get(key)
+    if stored is not None:
+        fetched_at, value = stored
+        if (now - fetched_at) < fresh_for:
+            _cache[key] = (fetched_at, value)
+            return value, fetched_at
+        if stale is None:
+            stale = (fetched_at, value)
+
+    # Nothing fresh. Browsing gives way to the reserve here; pricing does not.
+    if not essential and conserving():
+        if stale is not None:
+            return stale[1], stale[0]
+        raise Conserving()
+
     value = loader()
     _cache[key] = (now, value)
-    return value
+    try:
+        _store.put(key, value, now)
+    except Exception:  # noqa: BLE001 - a store that is down must not lose the call
+        logger.warning("Could not persist an odds snapshot for %s", key)
+    return value, now
 
 
 def clear_cache():
@@ -150,6 +242,13 @@ def _get(path: str, params: dict):
         import json
         payload = json.loads(response.read().decode('utf-8'))
         remaining = response.headers.get('x-requests-remaining')
+        # Recorded on every call, including the unbilled event listing, so the
+        # reserve check has a number to work from after a cold start.
+        if remaining is not None:
+            try:
+                _store.record_remaining(int(remaining))
+            except Exception:  # noqa: BLE001
+                logger.warning("Could not record the remaining credit count")
         return payload, remaining
 
 
@@ -158,7 +257,9 @@ def list_events():
     def _load():
         events, _ = _get(f"/sports/{SPORT}/events", {})
         return events
-    return _cached("events", _load)
+    # Listing events is unbilled, so the reserve has no reason to block it.
+    events, _fetched_at = _cached("events", _load, essential=True)
+    return events
 
 
 def _find_event(team_a: str, team_b: str):
@@ -215,6 +316,13 @@ def upcoming_games() -> dict:
     return {'status': 'ok', 'games': games}
 
 
+# Shown when the reserve has been reached and there is no snapshot to fall back
+# on. Deliberately explicit about the trade being made on the user's behalf.
+CONSERVING_MESSAGE = (
+    'Live odds are paused to keep the last few API credits for placing picks. '
+    'They come back when the monthly quota resets.'
+)
+
 def _http_message(exc: urllib.error.HTTPError) -> str:
     if exc.code in (401, 403):
         return 'Invalid or expired API key.'
@@ -223,15 +331,22 @@ def _http_message(exc: urllib.error.HTTPError) -> str:
     return f'Odds API error ({exc.code}).'
 
 
-def _fetch_market(event_id: str, market: str):
-    """One event's prices for one market. This is the billed call - 1 credit."""
+def _fetch_market(event_id: str, market: str, essential: bool = False):
+    """One event's prices for one market. This is the billed call - 1 credit.
+
+    Returns (payload, remaining, fetched_at), the last of which is when the
+    provider was actually asked rather than when this was called.
+    """
     def _load():
         return _get(
             f"/sports/{SPORT}/events/{event_id}/odds",
             {'regions': 'us', 'markets': market, 'oddsFormat': 'american',
              'bookmakers': DEFAULT_BOOKMAKERS},
         )
-    return _cached(f"props:{event_id}:{market}", _load)
+    (payload, remaining), fetched_at = _cached(
+        f"props:{event_id}:{market}", _load, essential=essential,
+    )
+    return payload, remaining, fetched_at
 
 
 def _collect_players(payload: dict, market: str) -> dict[str, list[dict]]:
@@ -299,7 +414,9 @@ def board(event_id: str, stat: str) -> dict:
         return {'status': 'no_market', 'message': f'No sportsbook market for {stat}.', 'entries': []}
 
     try:
-        payload, remaining = _fetch_market(event_id, market)
+        payload, remaining, fetched_at = _fetch_market(event_id, market)
+    except Conserving:
+        return {'status': 'conserving', 'message': CONSERVING_MESSAGE, 'entries': []}
     except urllib.error.HTTPError as exc:
         logger.warning("Odds API HTTP %s for event %s / %s", exc.code, event_id, market)
         return {'status': 'error', 'message': _http_message(exc), 'entries': []}
@@ -340,11 +457,13 @@ def board(event_id: str, stat: str) -> dict:
         'market': market,
         'stat': stat,
         'requests_remaining': remaining,
-        'fetched_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+        'fetched_at': datetime.fromtimestamp(fetched_at, timezone.utc)
+                      .isoformat(timespec='seconds'),
     }
 
 
-def player_prop(player: str, team: str, opponent: str, stat: str) -> dict:
+def player_prop(player: str, team: str, opponent: str, stat: str,
+                essential: bool = False) -> dict:
     """The lines for one player, for the panel on their analysis page.
 
     Served from the same cached event response the board uses, so opening a
@@ -369,7 +488,11 @@ def player_prop(player: str, team: str, opponent: str, stat: str) -> dict:
                 'message': f'No upcoming {team} vs {opponent} game listed by the books.',
                 'books': [],
             }
-        payload, remaining = _fetch_market(event['id'], market)
+        payload, remaining, fetched_at = _fetch_market(
+            event['id'], market, essential=essential,
+        )
+    except Conserving:
+        return {'status': 'conserving', 'message': CONSERVING_MESSAGE, 'books': []}
     except urllib.error.HTTPError as exc:
         logger.warning("Odds API HTTP %s for %s/%s", exc.code, player, stat)
         return {'status': 'error', 'message': _http_message(exc), 'books': []}
@@ -402,12 +525,14 @@ def player_prop(player: str, team: str, opponent: str, stat: str) -> dict:
         },
         'market': market,
         'requests_remaining': remaining,
-        'fetched_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+        'fetched_at': datetime.fromtimestamp(fetched_at, timezone.utc)
+                      .isoformat(timespec='seconds'),
         'books_count': len(books),
     }
 
 
-def alternate_lines(event_id: str, stat: str, player: str) -> dict:
+def alternate_lines(event_id: str, stat: str, player: str,
+                    essential: bool = False) -> dict:
     """The full ladder of lines and prices for one player and stat.
 
     Standard markets return a single line per book - the number the book
@@ -435,7 +560,11 @@ def alternate_lines(event_id: str, stat: str, player: str) -> dict:
         }
 
     try:
-        payload, remaining = _fetch_market(event_id, market)
+        payload, remaining, fetched_at = _fetch_market(
+            event_id, market, essential=essential,
+        )
+    except Conserving:
+        return {'status': 'conserving', 'message': CONSERVING_MESSAGE, 'lines': []}
     except urllib.error.HTTPError as exc:
         logger.warning("Alternate odds HTTP %s for %s/%s", exc.code, event_id, market)
         return {'status': 'error', 'message': _http_message(exc), 'lines': []}
@@ -487,5 +616,6 @@ def alternate_lines(event_id: str, stat: str, player: str) -> dict:
         'market': market,
         'lines': lines,
         'requests_remaining': remaining,
-        'fetched_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
+        'fetched_at': datetime.fromtimestamp(fetched_at, timezone.utc)
+                      .isoformat(timespec='seconds'),
     }
