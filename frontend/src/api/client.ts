@@ -109,11 +109,17 @@ export const api = {
     cutoff.setDate(cutoff.getDate() + days)
     const today = new Date()
     today.setHours(0, 0, 0, 0)
-    return schedule.filter((game) => {
-      const [y, m, d] = game.gameday.split('-').map(Number)
-      const date = new Date(y, m - 1, d)
-      return date >= today && date <= cutoff
-    })
+    return schedule
+      .filter((game) => {
+        const [y, m, d] = game.gameday.split('-').map(Number)
+        const date = new Date(y, m - 1, d)
+        return date >= today && date <= cutoff
+      })
+      // "Upcoming" means in the order they will be played. The bundle happens
+      // to be built in date order, but callers take the soonest game and the
+      // first dozen rows off the front of this list, and neither should depend
+      // on that staying true.
+      .sort((a, b) => a.gameday.localeCompare(b.gameday))
   },
 
   models: async (stat?: string): Promise<ModelInfo[]> => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ArrowsRightLeftIcon, CalendarDaysIcon } from '@heroicons/react/24/outline'
 import { api, ApiError } from '../api/client'
@@ -23,6 +23,7 @@ import { HitRatePanel } from '../components/player/HitRatePanel'
 import { OddsList } from '../components/player/OddsList'
 import { LineExplorer } from '../components/player/LineExplorer'
 import { SavePick } from '../components/player/SavePick'
+import { autoFillOpponent, type OpponentPin } from '../lib/matchup'
 import { ModelInfoPanel } from '../components/player/ModelInfoPanel'
 import { statLabel } from '../lib/statLabels'
 import { matchupColors } from '../lib/teamColors'
@@ -118,14 +119,48 @@ export default function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary.data])
 
-  // Auto-suggest the player's next scheduled opponent, once, when a player is picked.
+  // The opponent follows the player: picking someone fills in the defense they
+  // are next scheduled to face, so the ordinary question — how does this player
+  // look in the game he is about to play — takes one selection, not two.
+  //
+  // This has to re-run on every player change rather than only the first, which
+  // is what it used to do. Filling in once and then stopping means switching
+  // players silently keeps the previous player's defense, and every panel below
+  // — projection, chart, hit rates, matchup — then describes a game that is not
+  // being played, while looking entirely normal.
+  //
+  // `chosenOpponentFor` is what stops that from overriding a deliberate choice.
+  // It names the player whose opponent was chosen by hand or arrived in a link;
+  // while it matches the selected player, the fill-in leaves well alone. The
+  // sentinel 'next' means the choice should carry to whichever player is picked
+  // next, which is what Swap needs — it sets an opponent and then asks for a
+  // player to measure against it. No real player is named 'next'.
+  const chosenOpponentFor = useRef<OpponentPin>(
+    searchParams.get('opponent') ? searchParams.get('player') ?? 'next' : null,
+  )
+
   useEffect(() => {
-    if (!summary.data || opponent || !schedule.data) return
-    const playerTeam = summary.data.team
-    const game = schedule.data.find((g) => g.home_team === playerTeam || g.away_team === playerTeam)
-    if (game) setOpponent(game.home_team === playerTeam ? game.away_team : game.home_team)
+    if (!summary.data || !schedule.data) return
+    const result = autoFillOpponent({
+      pin: chosenOpponentFor.current,
+      player: summary.data.name,
+      team: summary.data.team,
+      schedule: schedule.data,
+      opponent,
+    })
+    chosenOpponentFor.current = result.pin
+    if (result.opponent !== opponent) setOpponent(result.opponent)
+    // `opponent` is read, not depended on: re-running when it changes would
+    // undo the user's own selection the moment they made it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [summary.data, schedule.data])
+
+  // Picking a defense by hand pins it: the user is asking about a specific
+  // matchup, and that outranks the fixture list until they change player.
+  const chooseOpponent = useCallback((next: string | null) => {
+    chosenOpponentFor.current = summary.data?.name ?? player
+    setOpponent(next)
+  }, [summary.data, player])
 
   const canSwap = !!summary.data && !!opponent
 
@@ -135,6 +170,9 @@ export default function Dashboard() {
     setTeam(opponent)
     setOpponent(offenseTeam)
     setPlayer(null)
+    // The defense just set is the entire point of the swap, so the player
+    // chosen next is measured against it rather than against his own fixture.
+    chosenOpponentFor.current = 'next'
   }
 
   const line = useMemo(() => {
@@ -339,7 +377,7 @@ export default function Dashboard() {
                 placeholder="Select opponent"
                 items={opponentItems}
                 value={opponent}
-                onChange={setOpponent}
+                onChange={chooseOpponent}
                 disabled={!summary.data}
                 disabledHint="Pick a player first"
               />
