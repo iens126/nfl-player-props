@@ -31,7 +31,9 @@ function DefenseSectionCard({ title, section, statKeys }: { title: string; secti
   return (
     <div className="rounded-2xl border border-border bg-surface-2 p-4 sm:p-5">
       <h3 className="text-sm font-semibold text-text">{title}</h3>
-      <p className="mt-0.5 text-xs text-text-faint">Allowed per game, league rank shown of {section.league_size} teams</p>
+      <p className="mt-0.5 text-xs text-text-faint">
+        Allowed per game over the last {section.weekly.length} games, ranked of {section.league_size} teams
+      </p>
 
       <div className="mt-4 space-y-3.5">
         {statKeys.map((key) => {

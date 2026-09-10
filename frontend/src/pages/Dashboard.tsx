@@ -438,10 +438,12 @@ export default function Dashboard() {
                       value={stat && summary.data.recent_averages[stat] !== undefined ? summary.data.recent_averages[stat].toFixed(1) : '—'}
                       sublabel={`Last ${RECENT_WINDOW_GAMES} games`}
                     />
+                    {/* season_averages covers the rolling form - the player's
+                        last games across seasons - not one calendar season. */}
                     <StatCard
-                      label="Season Avg"
+                      label="Rolling Avg"
                       value={stat && summary.data.season_averages[stat] !== undefined ? summary.data.season_averages[stat].toFixed(1) : '—'}
-                      sublabel={`${summary.data.games_played} games`}
+                      sublabel={`Last ${summary.data.games_played} games`}
                     />
                     <StatCard
                       label="Stability"
@@ -502,7 +504,11 @@ export default function Dashboard() {
                 <Card>
                   <SectionHeading
                     title="Defensive Matchup"
-                    subtitle={`What ${opponent} allows, with league ranks from this season's team data`}
+                    subtitle={
+                      defense.data
+                        ? `What ${opponent} allowed over its last ${defense.data.passing.weekly.length} games, ranked against every defense's same window`
+                        : `What ${opponent} allows, and how it ranks`
+                    }
                   />
                   {defense.loading && (
                     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -514,7 +520,7 @@ export default function Dashboard() {
                   {defense.data && (
                     <>
                       <DefenseMatchup defense={defense.data} showPassing={showPassing} showRushing={showRushing} />
-                      <DefenseRoles team={opponent} roles={defense.data.roles ?? []} />
+                      <DefenseRoles team={opponent} roles={defense.data.roles ?? []} season={defense.data.roles_season} />
                     </>
                   )}
                 </Card>
@@ -565,7 +571,10 @@ export default function Dashboard() {
               )}
 
               <Card>
-                <SectionHeading title="Game Log" />
+                <SectionHeading
+                  title="Game Log"
+                  subtitle="Most recent games first — the same rolling list the projection starts from"
+                />
                 {gameLog.loading && <Skeleton className="h-64 w-full" />}
                 {gameLog.error && <ErrorState message={gameLog.error} />}
                 {gameLog.data && <GameLogTable gameLog={gameLog.data} highlightStat={stat} line={line} />}

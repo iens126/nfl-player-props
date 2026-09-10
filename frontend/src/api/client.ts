@@ -173,7 +173,7 @@ export const api = {
     return {
       player: name,
       columns: ['week', 'opponent', ...stats],
-      rows: gameLog(file.games, stats, aggregates.constants.current_season),
+      rows: gameLog(file.games, stats, aggregates.constants.rolling_games),
     }
   },
 

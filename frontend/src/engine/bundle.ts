@@ -51,7 +51,10 @@ export interface Constants {
   half_life_games: number
   max_window: number
   bettable_columns: string[]
+  /** The season being played (calendar), not the one the form window covers. */
   current_season: number
+  /** Games a player's form and each defense's tables look back, across seasons. */
+  rolling_games: number
   usage_columns: Record<string, string[]>
 }
 

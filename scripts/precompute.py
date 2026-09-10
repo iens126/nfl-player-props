@@ -29,6 +29,7 @@ import argparse
 import gzip
 import json
 import logging
+import math
 import re
 import sys
 import time
@@ -41,8 +42,8 @@ import numpy as np
 import pandas as pd
 
 from core.data_loader import (
-    bettable_columns, load_career_data, load_current_rosters, load_team_data,
-    load_team_meta, pass_def, run_def, upcoming_schedule,
+    ROLLING_GAMES, bettable_columns, calendar_season, load_career_data, load_current_rosters,
+    load_team_meta, pass_def, recent_defense_rows, run_def, stats_season, upcoming_schedule,
 )
 from core.monte_carlo_sim import (
     POSITION_K, DEFAULT_K, STAT_MAP, position_allowed, signal_reliability,
@@ -68,7 +69,11 @@ def _as_json(value):
 
 
 def _clean(value, precision: int = 4):
-    """NaN/NaT -> None, numpy scalars -> plain Python, recursively.
+    """NaN/NaT/±inf -> None, numpy scalars -> plain Python, recursively.
+
+    Infinity matters as much as NaN: Python's json writes both as bare tokens
+    that JSON.parse rejects, so one stray value makes the whole file unloadable
+    in the browser while every Python-side check still reads it happily.
 
     Rounding keeps the bundle small; `precision` is raised for the parity
     fixtures, where a rounded expectation would mean the TypeScript port could
@@ -80,10 +85,8 @@ def _clean(value, precision: int = 4):
         return [_clean(v, precision) for v in value]
     if isinstance(value, (np.integer,)):
         return int(value)
-    if isinstance(value, (np.floating,)):
-        return None if np.isnan(value) else round(float(value), precision)
-    if isinstance(value, float):
-        return None if pd.isna(value) else round(value, precision)
+    if isinstance(value, (np.floating, float)):
+        return round(float(value), precision) if math.isfinite(value) else None
     if value is pd.NaT or (not isinstance(value, (list, dict, str, bool)) and pd.isna(value)):
         return None
     return value
@@ -99,7 +102,9 @@ class Writer:
     def write(self, relative: str, payload, precision: int = 4) -> None:
         path = self.root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        blob = json.dumps(_clean(payload, precision), separators=(',', ':')).encode()
+        # allow_nan=False: anything _clean missed fails the build here rather
+        # than shipping a file the browser cannot parse.
+        blob = json.dumps(_clean(payload, precision), separators=(',', ':'), allow_nan=False).encode()
         path.write_bytes(blob)
         self.files.append((relative, len(blob), len(gzip.compress(blob))))
 
@@ -225,6 +230,9 @@ def build_defense(writer: Writer, teams: list[str]) -> None:
         except Exception:
             logger.warning("  role breakdown failed for %s", team)
             summary['roles'] = []
+        # The role table is a single season of play-by-play (the new one only
+        # once every team has played), so the UI names which season it is.
+        summary['roles_season'] = stats_season()
         writer.write(f'defense/{team}.json', summary)
 
 
@@ -235,7 +243,8 @@ def build_aggregates(writer: Writer, teams: list[str], positions: list[str]) -> 
     what keeps the bundle small: 32 teams x 4 positions x 12 stats is under two
     thousand rows, versus the millions it would take to precompute answers.
     """
-    team_stats = load_team_data()
+    # Every defense's rolling window: the games its own averages come from.
+    team_stats = recent_defense_rows()
 
     # League mean/std per team stat, for the QB matchup z-score.
     league = {
@@ -304,10 +313,15 @@ def build_aggregates(writer: Writer, teams: list[str], positions: list[str]) -> 
             'half_life_games': HALF_LIFE_GAMES,
             'max_window': MAX_WINDOW,
             'bettable_columns': bettable_columns,
-            # The season load_player_data() resolves to. The projection window
-            # and the matchup weight both work off "this season only", so the
-            # browser has to know where the career log stops being history.
-            'current_season': int(load_team_data()['season'].max()),
+            # The season being played. Form windows don't depend on it - they
+            # count games across seasons - but the trained model's "week of
+            # the next game" does: a player last seen in an earlier season
+            # opens this one in week 1.
+            'current_season': calendar_season(),
+            # How far back a player's form and each defense's tables look,
+            # in games, regardless of season. find_player() and
+            # recent_defense_rows() apply the same number.
+            'rolling_games': ROLLING_GAMES,
             'usage_columns': USAGE_COLUMNS,
         },
     }, precision=6)
@@ -419,7 +433,7 @@ def main() -> int:
 
     logger.info("Building static bundle -> %s", root)
 
-    teams = sorted(load_team_data()['team'].dropna().unique().tolist())
+    teams = sorted(recent_defense_rows()['team'].dropna().astype(str).unique().tolist())
 
     logger.info("  reference data...")
     build_reference(writer)

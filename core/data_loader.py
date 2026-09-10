@@ -7,12 +7,15 @@ filtering, and gives the rest of the app (and the web backend) one place to
 force a refresh.
 """
 
+import logging
 import os
 import time
 
 import nflreadpy as nfl
 import pandas as pd
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 bettable_columns = [
     'passing_yards', 'passing_tds', 'completions', 'attempts', 'passing_interceptions',
@@ -51,17 +54,75 @@ def clear_cache():
     _cache.clear()
 
 
+NFL_TEAMS = 32
+
+# How many regular-season games every team must have played before a new
+# season's stats replace last season's as "this season".
+MIN_TEAM_GAMES = int(os.environ.get("MIN_TEAM_GAMES", "1"))
+
+# A season's worth of games. A player's form and a defense's tables both look
+# back this far *regardless of season*: last season's games stay in the list
+# until this season's push them out, one game at a time. A hard switch to the
+# new season at kickoff instead leaves every player with an empty or one-game
+# history for the first weeks of September.
+ROLLING_GAMES = int(os.environ.get("ROLLING_GAMES", "17"))
+
+
+def calendar_season() -> int:
+    """The season being played (or about to be), per nflverse's calendar rule."""
+    return nfl.get_current_season()
+
+
+def stats_season() -> int:
+    """The season the season-scoped loaders resolve to when no year is given.
+
+    nflreadpy's own default is the calendar's current season, which rolls over
+    at kickoff - after one game. Until the first full weekend is played, that
+    season holds two teams and a few dozen stat lines, and everything scoped to
+    it (the player index, the team list, the defense tables) collapses to those
+    two teams. So the new season only takes over once every team has played
+    MIN_TEAM_GAMES regular-season games; until then, last season is still the
+    most recent complete picture of the league.
+
+    Only single-season descriptive tables still depend on this - the
+    play-by-play role breakdown, and callers asking for "a season" without
+    naming one. Player form and the defense tables behind the projections use
+    rolling windows instead (find_player, recent_defense_rows), which take a
+    new season's games one at a time rather than switching over wholesale.
+    """
+    def _resolve():
+        current = nfl.get_current_season()
+        try:
+            teams = load_team_data(current)
+        except Exception:
+            # Before the opener nflverse may have no file for the new season.
+            logger.warning("No team stats for %s yet; using %s", current, current - 1, exc_info=True)
+            return current - 1
+        if 'season_type' in teams.columns:
+            teams = teams[teams['season_type'] == 'REG']
+        games = teams.groupby('team').size() if 'team' in teams.columns else pd.Series(dtype=int)
+        if len(games) >= NFL_TEAMS and games.min() >= MIN_TEAM_GAMES:
+            return current
+        logger.info("Season %s has %d of %d teams on the board; using %s",
+                    current, len(games), NFL_TEAMS, current - 1)
+        return current - 1
+    return _cached("stats_season", _resolve)
+
+
 def load_team_data(year=None):
+    year = stats_season() if year is None else year
     return _cached(f"team_stats:{year}", lambda: nfl.load_team_stats(year).to_pandas())
 
 
 def load_player_data(year=None):
+    year = stats_season() if year is None else year
     return _cached(f"player_stats:{year}", lambda: nfl.load_player_stats(year).to_pandas())
 
 
 def load_pbp_data(year=None):
     """Play-by-play for a season. Large (~50k rows, 372 columns) but only ever
     loaded at build time, by the precompute, never per request."""
+    year = stats_season() if year is None else year
     return _cached(f"pbp:{year}", lambda: nfl.load_pbp(year).to_pandas())
 
 
@@ -99,10 +160,11 @@ _CATEGORICAL_COLUMNS = ['player_display_name', 'position', 'team', 'opponent_tea
 def load_career_data():
     """Multi-season game logs, for career hit rates and model training.
 
-    load_player_data() deliberately stays scoped to the current season - the
-    defense rankings and matchup weights are about *this* year's teams. Career
-    questions ("how often has he cleared 60 yards?") and anything we want to
-    train a model on need the longer history, so they come from here instead.
+    This is the source for anything that describes form: a player's rolling
+    window (find_player), what each defense allowed inside its own rolling
+    window (recent_defense_player_rows), career hit rates, and model training.
+    It runs through the calendar's current season, so a new season's games
+    appear here as soon as nflverse publishes them.
 
     Columns are pruned and the string columns cast to categoricals, which takes
     roughly 130k rows from ~113MB down to under 10MB - worth doing on a
@@ -150,7 +212,10 @@ def load_current_rosters():
         if 'week' in df.columns:
             df = df.sort_values('week')
         df = df.drop_duplicates('full_name', keep='last')
-        return df.set_index('full_name')[['team', 'position']]
+        # The headshot rides along: stat lines are no longer read season by
+        # season, so the roster is the one place that always carries it.
+        cols = [c for c in ('team', 'position', 'headshot_url') if c in df.columns]
+        return df.set_index('full_name')[cols]
     return _cached("current_rosters", _load)
 
 
@@ -211,22 +276,87 @@ def get_pos(team, pos):
 
 
 def find_player(name):
-    player_stats = load_player_data()
-    df = player_stats[player_stats['player_display_name'] == name]
+    """The player's rolling form: their last ROLLING_GAMES games, oldest first.
+
+    Deliberately not "this season". A player who hasn't played yet this year
+    is described by the end of last season; one who has played once gets that
+    game added to the end of the same list while the oldest drops off. The
+    projection window, stability rating and QB matchup spread all read this,
+    so they move forward together, a game at a time.
+    """
+    career = load_career_data()
+    df = career[career['player_display_name'] == name]
     if df.empty:
         return df
-    df = df.drop(columns=['player_id', 'player_name', 'position_group', 'season'])
-    keep_cols = ['player_display_name'] + ['headshot_url'] + ['week'] + ['position'] + ['team'] + ['opponent_team'] + bettable_columns
-    df = df[keep_cols]
+    df = df.sort_values(['season', 'week']).tail(ROLLING_GAMES)
+    keep_cols = ['player_display_name', 'season', 'week', 'position', 'team', 'opponent_team'] + bettable_columns
+    df = df[[c for c in keep_cols if c in df.columns]].copy()
+    for col in _CATEGORICAL_COLUMNS:
+        if col in df.columns:
+            df[col] = df[col].astype(str)
     df = df.dropna(how='all', axis=1)
     df = df.loc[:, (df != 0).any(axis=0)]
-    df = df.sort_values('week', ascending=True)
-    return df
+    return df.reset_index(drop=True)
+
+
+def load_recent_team_data():
+    """Team box scores for last season and this one, oldest first.
+
+    Two seasons is enough to fill every defense's rolling window at kickoff,
+    when the new season holds a game or none.
+    """
+    def _load():
+        current = calendar_season()
+        frames = []
+        for year in (current - 1, current):
+            try:
+                frame = load_team_data(year)
+            except Exception:
+                # Before the opener nflverse may have no file for the new season.
+                logger.warning("No team stats for %s yet", year, exc_info=True)
+                continue
+            if not frame.empty:
+                frames.append(frame)
+        if not frames:
+            raise RuntimeError(f"No team stats for {current - 1} or {current}")
+        df = pd.concat(frames, ignore_index=True)
+        return df.sort_values(['season', 'week'], kind='stable').reset_index(drop=True)
+    return _cached("recent_team_stats", _load)
+
+
+def recent_defense_rows():
+    """Team box scores inside each defense's rolling window.
+
+    A row is one offense's game, so it belongs to exactly one defense - its
+    opponent_team. Keeping each defense's last ROLLING_GAMES rows gives every
+    team a full season's sample even in week 1: teams that have played this
+    year swap their oldest game for the new one, and the rest are still
+    described by last season.
+    """
+    def _build():
+        df = load_recent_team_data()
+        return df.groupby('opponent_team', group_keys=False, sort=False).tail(ROLLING_GAMES)
+    return _cached("recent_defense_rows", _build)
+
+
+def recent_defense_player_rows():
+    """Player stat lines from the games inside each defense's rolling window."""
+    def _build():
+        keys = recent_defense_rows()[['opponent_team', 'season', 'week']].drop_duplicates()
+        keys = keys.astype({'opponent_team': str, 'season': int, 'week': int})
+        career = load_career_data()
+        career = career[career['season'] >= keys['season'].min()].copy()
+        for col in ('opponent_team', 'position', 'player_display_name'):
+            career[col] = career[col].astype(str)
+        career = career.astype({'season': int, 'week': int})
+        return career.merge(keys, on=['opponent_team', 'season', 'week'], how='inner')
+    return _cached("recent_defense_player_rows", _build)
 
 
 def pass_def(team):
-    team_stats = load_team_data()
-    passing_stats = ['week', 'team', 'opponent_team', 'completions', 'attempts', 'passing_yards', 'passing_tds', 'passing_interceptions']
+    """What `team`'s defense allowed through the air, over its rolling window."""
+    team_stats = recent_defense_rows()
+    passing_stats = ['season', 'week', 'team', 'opponent_team', 'completions', 'attempts', 'passing_yards', 'passing_tds', 'passing_interceptions']
     def_df = team_stats[passing_stats].copy()
     def_df['Team'] = def_df['opponent_team']
     def_df = def_df.drop(columns='opponent_team')
@@ -239,8 +369,9 @@ def pass_def(team):
 
 
 def run_def(team):
-    team_stats = load_team_data()
-    rushing_stats = ['week', 'team', 'opponent_team', 'carries', 'rushing_yards', 'rushing_tds']
+    """What `team`'s defense allowed on the ground, over its rolling window."""
+    team_stats = recent_defense_rows()
+    rushing_stats = ['season', 'week', 'team', 'opponent_team', 'carries', 'rushing_yards', 'rushing_tds']
     def_df = team_stats[rushing_stats].copy()
     def_df['Team'] = def_df['opponent_team']
     def_df = def_df.drop(columns='opponent_team')

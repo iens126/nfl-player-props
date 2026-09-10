@@ -31,7 +31,9 @@ function Delta({ value, league }: { value: number | null; league: number | null 
   )
 }
 
-export function DefenseRoles({ team, roles }: { team: string; roles: DefenseRoleRow[] }) {
+export function DefenseRoles({
+  team, roles, season,
+}: { team: string; roles: DefenseRoleRow[]; season?: number }) {
   if (!roles || roles.length === 0) return null
 
   // Lead with the primary role for each position; deeper roles are thinner and
@@ -46,7 +48,9 @@ export function DefenseRoles({ team, roles }: { team: string; roles: DefenseRole
         <h3 className="text-xs font-bold uppercase tracking-wider text-text-muted">
           Allowed by opposing role
         </h3>
-        <span className="text-[11px] text-text-faint">this season, from play-by-play</span>
+        <span className="text-[11px] text-text-faint">
+          {season ? `${season} season` : 'this season'}, from play-by-play
+        </span>
       </div>
 
       <div className="mt-3 -mx-1 overflow-x-auto scroll-thin">

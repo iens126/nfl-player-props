@@ -64,16 +64,24 @@ def hit_rates(name, stat_cat, line):
             'rate': hits / games,
             'average': float(np.mean(sample)),
         })
+        if key == 'season':
+            # Which season "season" is: the player's latest, which before
+            # their first game of a new year is still last year.
+            out[-1]['season'] = int(current_season)
     return out
 
 
 def _window(name, stat_cat):
-    """The player's most recent games for `stat_cat`, oldest -> newest."""
+    """The player's most recent games for `stat_cat`, oldest -> newest.
+
+    The last MAX_WINDOW of their rolling form, wherever those games fell: a
+    player's first game of a new season joins the end of last season's list.
+    """
     df = find_player(name)
     if stat_cat not in df.columns:
         raise ValueError(f"'{stat_cat}' has no recorded data for {name}")
 
-    series = df.sort_values('week')[stat_cat].dropna()
+    series = df.sort_values(['season', 'week'])[stat_cat].dropna()
     values = series.tail(MAX_WINDOW).to_numpy(dtype=float)
     if len(values) == 0:
         raise ValueError(f"Not enough recent games for {name} to run a projection")

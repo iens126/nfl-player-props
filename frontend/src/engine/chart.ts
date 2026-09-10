@@ -2,8 +2,8 @@
  * Performance-chart series, ported from core/stat_visualization.py.
  *
  * Two shapes, matching the Python:
- *  - week ranges align the player's games to what the defense allowed in the
- *    same week of the current season;
+ *  - game ranges take the player's last N games (or their latest season) and
+ *    pair each with what the defense allowed in that same season and week;
  *  - the career range spans multiple seasons, where weeks repeat and a single
  *    past game can't be aligned to one week of this defense, so the comparison
  *    bar drops to what that defense allowed the player's position across that
@@ -35,27 +35,37 @@ export function comparisonSeries(
 
   if (range === 'career') return careerSeries(games, stat, defense, aggregates)
 
-  const seasonGames = games
-    .filter((g) => g.season === constants.current_season)
-    .sort((a, b) => Number(a.week) - Number(b.week))
-  const scoped = range === 'season' ? seasonGames : seasonGames.slice(-Number(range))
+  const ordered = [...games].sort(
+    (a, b) => Number(a.season) - Number(b.season) || Number(a.week) - Number(b.week),
+  )
+  // 'season' is the player's most recent season — for someone who hasn't
+  // played yet this year, that's last year. The numbered ranges are their last
+  // N games wherever they fell: the same rolling list the projection reads.
+  const latestSeason = ordered.reduce((max, g) => Math.max(max, Number(g.season) || 0), 0)
+  const scoped = range === 'season'
+    ? ordered.filter((g) => Number(g.season) === latestSeason)
+    : ordered.slice(-Number(range))
+  const spansSeasons = new Set(scoped.map((g) => Number(g.season))).size > 1
 
   const defenseRows = aggregates.defense_weekly[defense]?.[defenseType === 'pass' ? 'pass' : 'run'] ?? []
-  const allowedByWeek = new Map<number, number>()
+  const allowedByGame = new Map<string, number>()
   for (const row of defenseRows) {
     const value = numeric(row[defenseStat])
-    if (value !== null) allowedByWeek.set(Number(row.week), value)
+    if (value !== null) allowedByGame.set(`${Number(row.season)}|${Number(row.week)}`, value)
   }
 
-  const weeks: ChartWeek[] = scoped.map((g) => ({
-    week: Number(g.week),
-    // Week ranges sit inside one season, so the chart labels by week alone.
-    season: null,
-    label: null,
-    opponent: (g.opponent_team as string | null) ?? null,
-    player_value: numeric(g[stat]),
-    defense_allowed: allowedByWeek.get(Number(g.week)) ?? null,
-  }))
+  const weeks: ChartWeek[] = scoped.map((g) => {
+    const season = Number(g.season)
+    return {
+      week: Number(g.week),
+      // Label by week alone unless the range crosses a season, where weeks repeat.
+      season: spansSeasons ? season : null,
+      label: spansSeasons ? `'${String(season).slice(2)} W${Number(g.week)}` : null,
+      opponent: (g.opponent_team as string | null) ?? null,
+      player_value: numeric(g[stat]),
+      defense_allowed: allowedByGame.get(`${season}|${Number(g.week)}`) ?? null,
+    }
+  })
 
   return {
     stat,
@@ -109,14 +119,15 @@ function careerSeries(
   }
 }
 
-/** Game-log table rows, matching the shape the old API returned. */
-export function gameLog(games: GameRow[], stat: string[], currentSeason: number): GameLogRow[] {
+/** Game-log table rows: the player's rolling form, newest first. */
+export function gameLog(games: GameRow[], stat: string[], rollingGames: number): GameLogRow[] {
   const rows = [...games]
-    .filter((g) => g.season === currentSeason)
-    .sort((a, b) => Number(b.week) - Number(a.week))
+    .sort((a, b) => Number(b.season) - Number(a.season) || Number(b.week) - Number(a.week))
+    .slice(0, rollingGames)
     .map((g) => {
       const record: GameLogRow = {
         week: Number(g.week),
+        season: Number(g.season),
         opponent: (g.opponent_team as string | null) ?? null,
       }
       for (const s of stat) record[s] = numeric(g[s])

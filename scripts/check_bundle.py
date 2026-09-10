@@ -30,9 +30,18 @@ class Failures(list):
             self.append(message)
 
 
+def _reject_constant(token: str):
+    raise ValueError(f"non-standard JSON token {token}")
+
+
 def load(path: Path):
+    """Parse the way the browser will: NaN and Infinity are errors, not values.
+
+    Python's json accepts both by default, so a file JSON.parse rejects used to
+    pass every check here and then fail for whoever selected that player.
+    """
     with path.open() as handle:
-        return json.load(handle)
+        return json.load(handle, parse_constant=_reject_constant)
 
 
 def check_bundle(root: Path) -> Failures:
@@ -86,6 +95,16 @@ def check_bundle(root: Path) -> Failures:
     player = load(sample)
     failures.check('summary' in player and 'games' in player, f"{sample.name} is malformed")
     failures.check(len(player.get('games', [])) > 0, f"{sample.name} has no games")
+
+    # Every file must parse as strict JSON. The spot-check above only ever
+    # opened one player, so a single bad file among 400 went out unnoticed.
+    unparseable = []
+    for path in sorted(root.rglob('*.json')):
+        try:
+            load(path)
+        except ValueError as error:
+            unparseable.append(f"{path.relative_to(root)} ({error})")
+    failures.check(not unparseable, f"{len(unparseable)} files are not strict JSON: {unparseable[:5]}")
 
     return failures
 

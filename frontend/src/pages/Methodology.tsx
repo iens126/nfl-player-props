@@ -27,7 +27,8 @@ export default function Methodology() {
           <SectionHeading title="Recent Form & Stability" />
           <p className="text-sm leading-relaxed text-text-muted">
             For each prop stat, GridEdge computes the player's mean, standard deviation, and
-            coefficient of variation (CV = std ÷ mean) across the season, after removing games
+            coefficient of variation (CV = std ÷ mean) across their last 17 games — reaching back
+            into last season until this one has supplied that many — after removing games
             that are statistical outliers (games more than 2.5 standard deviations from the
             player's average). A lower CV means more consistent week-to-week production. We bucket
             CV into <span className="font-semibold text-over">HIGH</span> (below 0.35),{' '}
@@ -39,9 +40,11 @@ export default function Methodology() {
         <Card>
           <SectionHeading title="Defensive Matchup & League Ranks" />
           <p className="text-sm leading-relaxed text-text-muted">
-            Pass and rush defense numbers are each team's average allowed per game across their
-            season so far. League ranks are computed by ranking all 32 teams against each other on
-            the current dataset — rank 1 is always the most favorable defense for that stat (e.g.
+            Pass and rush defense numbers are each team's average allowed per game over its last
+            17 games, carried across seasons: in week 1 every defense still has a full season's
+            sample, and a team that has played once this year has swapped its oldest game for that
+            one. League ranks are computed by ranking all 32 teams against each other on that same
+            window — rank 1 is always the most favorable defense for that stat (e.g.
             fewest passing yards allowed, or most interceptions forced). These ranks are calculated
             live from the loaded data, not hardcoded.
           </p>
@@ -70,12 +73,13 @@ export default function Methodology() {
               recent and longer-run form, their recent usage (targets, carries or pass
               attempts — volume drives yardage), their career baseline, how erratic they are,
               how much history exists, what the opposing defense has given up to that
-              position, and the week of the season.
+              position over its last 17 games, and the week of the season.
             </p>
             <p>
               <span className="font-semibold text-text">How it avoids fooling itself.</span>{' '}
               Every feature for a given game is computed only from games played before it, and
-              the model is scored on the most recent season, which it never trained on. Doing
+              the model is scored on the most recent season with at least eight weeks played,
+              which it never trained on. Doing
               this the lazy way — shuffling games at random — would let the future leak into
               the past and produce accuracy that vanishes in real use.
             </p>
@@ -101,7 +105,7 @@ export default function Methodology() {
           <SectionHeading title="Hit Rates & Career Data" />
           <p className="text-sm leading-relaxed text-text-muted">
             Alongside every projection, GridEdge counts how many times the player has actually
-            reached your line — over their last 3, 5 and 10 games, this season, and their
+            reached your line — over their last 3, 5 and 10 games, their latest season, and their
             whole career (eight seasons of game logs). This involves no modelling at all; it
             is a tally of games that happened. Where the career rate and the season rate
             diverge sharply, that usually reflects a change in role rather than luck, and the

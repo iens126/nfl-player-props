@@ -101,6 +101,8 @@ class DefenseSummaryOut(BaseModel):
     rushing: DefenseSection
     # What this defense allowed by opposing role. Descriptive only.
     roles: list[DefenseRoleRow] = []
+    # The single season of play-by-play the role table covers.
+    roles_season: Optional[int] = None
 
 
 class ProjectionRequest(BaseModel):
@@ -148,6 +150,8 @@ class HitRate(BaseModel):
     hits: int
     rate: float
     average: float
+    # On the 'season' window: which season that is (the player's latest).
+    season: Optional[int] = None
 
 
 class FeatureImportance(BaseModel):

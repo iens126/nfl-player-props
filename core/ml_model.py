@@ -36,13 +36,19 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from core.data_loader import bettable_columns, cached, load_career_data
+from core.data_loader import ROLLING_GAMES, bettable_columns, cached, calendar_season, load_career_data
 
 logger = logging.getLogger(__name__)
 
 RIDGE_ALPHA = 10.0
 N_RESIDUAL_BINS = 5
 MIN_TRAINING_ROWS = 500
+
+# A season is only worth validating on once it holds this many weeks. At
+# kickoff the newest season is a handful of games: too few rows to score on,
+# and too noisy to compare build to build against the refresh job's
+# regression gate.
+MIN_HOLDOUT_WEEKS = 8
 
 # Which usage columns inform each stat. Yardage is driven by volume, so a
 # receiver's recent targets matter as much as their recent yards.
@@ -127,9 +133,50 @@ def _prior_ewma(frame: pd.DataFrame, column: str, half_life: float) -> pd.Series
     )
 
 
+def _defense_game_index(career: pd.DataFrame) -> pd.DataFrame:
+    """Each defense's games in order: (opponent_team, season, week) -> game_no."""
+    games = career[['opponent_team', 'season', 'week']].astype({'opponent_team': str}).drop_duplicates()
+    games = games.sort_values(['opponent_team', 'season', 'week']).reset_index(drop=True)
+    games['game_no'] = games.groupby('opponent_team').cumcount()
+    return games
+
+
+def _rolling_def_allowed(df: pd.DataFrame, stat: str, games: pd.DataFrame) -> np.ndarray:
+    """What each row's defense allowed to that position over its previous ROLLING_GAMES games.
+
+    Strictly earlier games only - the game a row belongs to never counts
+    toward its own feature - and the window runs across seasons, so week 1
+    has last season's sample behind it rather than nothing. Prediction reads
+    the same quantity from position_allowed(), which covers each defense's
+    latest ROLLING_GAMES games.
+    """
+    keys = ['opponent_team', 'position', 'season', 'week']
+    per_game = df.groupby(keys, observed=True)[stat].agg(['sum', 'count']).reset_index()
+    per_game = per_game.merge(games, on=['opponent_team', 'season', 'week'], how='left')
+    sizes = games.groupby('opponent_team').size()
+
+    parts = []
+    for (defense, _position), chunk in per_game.groupby(['opponent_team', 'position'], observed=True):
+        n = int(sizes[defense])
+        idx = chunk['game_no'].to_numpy(int)
+        sums, counts = np.zeros(n), np.zeros(n)
+        sums[idx] = chunk['sum'].to_numpy(float)
+        counts[idx] = chunk['count'].to_numpy(float)
+        window_sum = pd.Series(sums).rolling(ROLLING_GAMES, min_periods=1).sum().shift(1)
+        window_count = pd.Series(counts).rolling(ROLLING_GAMES, min_periods=1).sum().shift(1)
+        allowed = (window_sum / window_count.replace(0.0, np.nan)).to_numpy()
+        parts.append(chunk[keys].assign(def_allowed=allowed[idx]))
+
+    table = pd.concat(parts, ignore_index=True)
+    return df[keys].merge(table, on=keys, how='left')['def_allowed'].to_numpy()
+
+
 def _build_frame(stat: str) -> tuple[pd.DataFrame, list[str]]:
     """Training rows with strictly backward-looking features."""
     df = load_career_data()
+    # Before the position filter: a defense's games are every game it played,
+    # not only the ones where this position recorded a stat.
+    defense_games = _defense_game_index(df)
     positions = POSITIONS_FOR_STAT.get(stat, _DEFAULT_POSITIONS)
 
     df = df[df['position'].isin(positions)].copy()
@@ -148,11 +195,10 @@ def _build_frame(stat: str) -> tuple[pd.DataFrame, list[str]]:
     df['career_std'] = grouped.transform(lambda s: s.shift(1).expanding().std())
     df['games_played'] = grouped.transform(lambda s: s.shift(1).expanding().count())
 
-    # What this defense has allowed to this position so far this season - again
-    # shifted, so a game never contributes to its own matchup feature.
-    df['def_allowed'] = df.groupby(['season', 'opponent_team', 'position'], observed=True)[stat].transform(
-        lambda s: s.shift(1).expanding().mean()
-    )
+    # What this defense allowed to this position over its previous
+    # ROLLING_GAMES games, across seasons. It used to reset every season, which
+    # left week 1 with no matchup feature at all and dropped those rows.
+    df['def_allowed'] = _rolling_def_allowed(df, stat, defense_games)
 
     features = ['form_short', 'form_long', 'career_avg', 'career_std', 'games_played', 'def_allowed', 'week']
     for col in usage:
@@ -185,14 +231,25 @@ def _permutation_importance(model, X, y, features, rng) -> list[dict]:
     return sorted(scores, key=lambda s: -s['impact'])
 
 
+def _holdout_season(frame: pd.DataFrame) -> int | None:
+    """The most recent season with at least MIN_HOLDOUT_WEEKS weeks of games."""
+    weeks = frame.groupby('season')['week'].nunique()
+    eligible = weeks[weeks >= MIN_HOLDOUT_WEEKS]
+    return int(eligible.index.max()) if len(eligible) else None
+
+
 def train(stat: str) -> TrainedModel | None:
-    """Fit the model for one stat, validating on the most recent season."""
+    """Fit the model for one stat, validating on the most recent full-enough season."""
     frame, features = _build_frame(stat)
     if len(frame) < MIN_TRAINING_ROWS:
         logger.warning("Not enough history to train a model for %s (%d rows)", stat, len(frame))
         return None
 
-    holdout = frame['season'].max()
+    holdout = _holdout_season(frame)
+    if holdout is None:
+        return None
+    # A partial season after the holdout sits on neither side: training on it
+    # would let the model see games played after the ones it is scored on.
     train_df, val_df = frame[frame['season'] < holdout], frame[frame['season'] == holdout]
     if len(train_df) < MIN_TRAINING_ROWS or len(val_df) < 50:
         return None
@@ -293,20 +350,26 @@ def features_for_next_game(name: str, opponent: str, stat: str, model: TrainedMo
     def ewma(series: pd.Series, half_life: float) -> float:
         return float(series.ewm(halflife=half_life, min_periods=1).mean().iloc[-1])
 
-    current_season = int(player['season'].iloc[-1])
+    # The next game's week: a player whose last game was in an earlier season
+    # opens the new one in week 1, not week 19.
+    last_season = int(player['season'].iloc[-1])
+    next_week = 1.0 if last_season < calendar_season() else float(player['week'].iloc[-1]) + 1
     row = {
         'form_short': ewma(values, 3),
         'form_long': ewma(values, 8),
         'career_avg': float(values.mean()),
         'career_std': float(values.std()) if len(values) > 1 else 0.0,
         'games_played': float(len(values)),
-        'week': float(player['week'].iloc[-1]) + 1,
+        'week': next_week,
     }
 
-    season_rows = df[(df['season'] == current_season) & (df['opponent_team'] == opponent)]
+    # What this defense allowed to the position over its latest ROLLING_GAMES
+    # games - the quantity _rolling_def_allowed trained on, and the one the
+    # browser reads from aggregates.position_allowed.
+    from core.monte_carlo_sim import position_allowed
     position = str(player['position'].iloc[-1])
-    allowed = season_rows[season_rows['position'] == position][stat].fillna(0.0)
-    row['def_allowed'] = float(allowed.mean()) if len(allowed) else float(values.mean())
+    allowed = position_allowed(opponent, position, stat)
+    row['def_allowed'] = float(allowed) if np.isfinite(allowed) else row['career_avg']
 
     for col in USAGE_COLUMNS.get(stat, []):
         if col in player.columns:

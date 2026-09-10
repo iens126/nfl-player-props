@@ -33,6 +33,7 @@ export interface PlayerSummary {
 
 export interface GameLogRow {
   week: number
+  season: number
   opponent: string | null
   [stat: string]: number | string | null
 }
@@ -99,6 +100,8 @@ export interface DefenseSummary {
   rushing: DefenseSection
   /** What this defense allowed by opposing role. Descriptive, not predictive. */
   roles: DefenseRoleRow[]
+  /** The single season of play-by-play the role table covers. */
+  roles_season?: number
 }
 
 export type ModelKey = 'ml' | 'ensemble' | 'lognormal' | 'negbin' | 'empirical' | 'triangular'
@@ -144,6 +147,8 @@ export interface HitRate {
   hits: number
   rate: number
   average: number
+  /** On the 'season' window: which season that is (the player's latest). */
+  season?: number
 }
 
 export interface BookLine {

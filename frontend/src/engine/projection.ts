@@ -30,9 +30,16 @@ function statValues(games: GameRow[], stat: string): number[] {
     .filter((v): v is number => typeof v === 'number' && !Number.isNaN(v))
 }
 
-/** Rows from the season the app treats as "current" — what find_player returned. */
-function currentSeasonGames(games: GameRow[], currentSeason: number): GameRow[] {
-  return games.filter((g) => g.season === currentSeason)
+/**
+ * The player's rolling form — their last `rollingGames` games, across seasons.
+ * Mirrors find_player(): last season's games stay in the list until this
+ * season's push them out, one game at a time, so nobody starts September with
+ * an empty history.
+ */
+function formGames(games: GameRow[], rollingGames: number): GameRow[] {
+  return [...games]
+    .sort((a, b) => Number(a.season) - Number(b.season) || Number(a.week) - Number(b.week))
+    .slice(-rollingGames)
 }
 
 /**
@@ -50,14 +57,14 @@ export function createWeight(
   aggregates: Aggregates,
 ): number {
   const { constants } = aggregates
-  const season = currentSeasonGames(games, constants.current_season)
-  if (season.length === 0) return 0
+  const form = formGames(games, constants.rolling_games)
+  if (form.length === 0) return 0
 
-  const position = String(season[season.length - 1].position ?? '')
+  const position = String(form[form.length - 1].position ?? '')
   const mapping = constants.stat_map[stat]
   if (!mapping) return 0
 
-  const playerStd = sampleStd(statValues(season, stat))
+  const playerStd = sampleStd(statValues(form, stat))
   let weight: number
 
   if (position === 'QB') {
@@ -129,6 +136,8 @@ export function hitRates(games: GameRow[], stat: string, line: number): HitRate[
       hits,
       rate: hits / sample.length,
       average: sample.reduce((a, b) => a + b, 0) / sample.length,
+      // Which season "season" is, so the panel can say so.
+      ...(key === 'season' ? { season: latestSeason } : {}),
     })
   }
   return out
@@ -162,8 +171,10 @@ function mlFeatures(
   if (values.length === 0) return null
 
   const last = games[games.length - 1]
-  const currentSeason = Number(last.season)
   const position = String(last.position ?? '')
+  // The next game's week: a player last seen in an earlier season opens this
+  // one in week 1, not week 19. Mirrors features_for_next_game().
+  const nextWeek = Number(last.season) < aggregates.constants.current_season ? 1 : Number(last.week) + 1
 
   const row: Record<string, number> = {
     form_short: ewmaLast(values, 3),
@@ -171,11 +182,12 @@ function mlFeatures(
     career_avg: values.reduce((a, b) => a + b, 0) / values.length,
     career_std: values.length > 1 ? sampleStd(values) : 0,
     games_played: values.length,
-    week: Number(last.week) + 1,
+    week: nextWeek,
   }
 
-  // What this defense allowed to the player's position, this season.
-  const allowed = aggregates.career_defense_allowed[`${opponent}|${position}`]?.[String(currentSeason)]?.[stat]
+  // What this defense allowed to the player's position over its last
+  // rolling_games games, across seasons — the number the matchup weight reads.
+  const allowed = aggregates.position_allowed[`${opponent}|${position}|${stat}`]
   row.def_allowed = typeof allowed === 'number' ? allowed : row.career_avg
 
   for (const column of aggregates.constants.usage_columns[stat] ?? []) {
@@ -246,8 +258,8 @@ export function project(input: ProjectInput): ProjectionResponse {
 
   if (!constants.stat_map[stat]) throw new Error(`Unsupported stat category '${stat}'`)
 
-  const season = currentSeasonGames(games, constants.current_season)
-  const values = statValues(season, stat).slice(-MAX_WINDOW)
+  const form = formGames(games, constants.rolling_games)
+  const values = statValues(form, stat).slice(-MAX_WINDOW)
   if (values.length === 0) {
     throw new Error(`Not enough recent games for ${player} to run a projection`)
   }

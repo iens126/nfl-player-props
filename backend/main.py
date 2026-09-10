@@ -22,9 +22,9 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.data_loader import (
-    bettable_columns, find_player, load_player_data, load_team_data,
+    bettable_columns, calendar_season, find_player, load_player_data, load_team_data,
     load_team_meta, load_current_rosters, current_team_and_position, load_career_data,
-    upcoming_schedule, clear_cache,
+    recent_defense_rows, upcoming_schedule, clear_cache,
 )
 from core.stats_utils import determine_stability, stability_rating
 from core.stat_visualization import career_series, comparison_series
@@ -152,7 +152,9 @@ def refresh_cache():
 
 @app.get("/api/teams", response_model=list[TeamOut])
 def list_teams():
-    team_stats = load_team_data()
+    # Every team with a defensive window - all 32 even at kickoff, when only
+    # two of them have played in the new season.
+    team_stats = recent_defense_rows()
     meta = load_team_meta()
     teams = sorted(team_stats['team'].dropna().unique().tolist())
     return [
@@ -302,9 +304,13 @@ def list_players(
     # Current team/position comes from the live roster, not the stat lines -
     # a player's most recent stat row can be a season stale once they've been
     # traded, cut, or re-signed elsewhere in the offseason. Still require a
-    # stat history so the app never lists a player it can't actually analyze.
+    # stat history so the app never lists a player it can't actually analyze -
+    # in last season or this one, not this season alone, which at kickoff is
+    # two teams' worth of players.
     roster = load_current_rosters().reset_index().rename(columns={'full_name': 'player_display_name'})
-    analyzable_names = set(load_player_data()['player_display_name'].unique())
+    career = load_career_data()
+    recent = career[career['season'] >= calendar_season() - 1]
+    analyzable_names = set(recent['player_display_name'].astype(str).unique())
     df = roster[roster['player_display_name'].isin(analyzable_names) & roster['position'].isin(POSITION_GROUPS)]
 
     if team:
@@ -364,18 +370,24 @@ def player_summary(name: str):
         for stat, row in summary.iterrows()
     ]
 
+    # Over the rolling form (find_player), not a calendar season - the key
+    # keeps its old name so the response shape doesn't change.
     season_averages = {c: float(df[c].mean()) for c in available_stats}
-    recent = df.sort_values('week').tail(SIM_WINDOW)
+    recent = df.tail(SIM_WINDOW)
     recent_averages = {c: float(recent[c].mean()) for c in available_stats}
 
-    headshots = df['headshot_url'].dropna().unique() if 'headshot_url' in df.columns else []
+    roster = load_current_rosters()
+    headshot = (
+        roster.at[name, 'headshot_url']
+        if name in roster.index and 'headshot_url' in roster.columns else None
+    )
     team, pos = current_team_and_position(name, df)
 
     return PlayerSummary(
         name=name,
         team=team,
         position=pos,
-        headshot_url=headshots[0] if len(headshots) > 0 else None,
+        headshot_url=headshot if isinstance(headshot, str) and headshot else None,
         games_played=len(df),
         available_stats=available_stats,
         stability=stability,
@@ -391,8 +403,8 @@ def player_gamelog(name: str):
     columns = ['week', 'opponent_team'] + available_stats
 
     rows = []
-    for _, row in df.sort_values('week', ascending=False).iterrows():
-        rec = {'week': int(row['week']), 'opponent': row['opponent_team']}
+    for _, row in df.sort_values(['season', 'week'], ascending=False).iterrows():
+        rec = {'week': int(row['week']), 'season': int(row['season']), 'opponent': row['opponent_team']}
         for c in available_stats:
             rec[c] = float(row[c]) if pd.notna(row[c]) else None
         rows.append(rec)
@@ -425,7 +437,7 @@ def player_chart(
 @app.get("/api/defense/{team}", response_model=DefenseSummaryOut)
 def defense_matchup(team: str):
     team = team.upper()
-    valid_teams = set(load_team_data()['team'].unique())
+    valid_teams = set(recent_defense_rows()['team'].unique())
     if team not in valid_teams:
         raise HTTPException(status_code=404, detail=f"Unknown team '{team}'")
     return core_defense_summary(team)
@@ -443,7 +455,7 @@ def projection(req: ProjectionRequest):
     if req.opponent == player_team:
         raise HTTPException(status_code=400, detail="Opponent must be different from the player's own team")
 
-    valid_teams = set(load_team_data()['team'].unique())
+    valid_teams = set(recent_defense_rows()['team'].unique())
     if req.opponent not in valid_teams:
         raise HTTPException(status_code=404, detail=f"Unknown opponent team '{req.opponent}'")
 

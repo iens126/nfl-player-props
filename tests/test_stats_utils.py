@@ -69,6 +69,29 @@ def test_empty_input_is_rejected_clearly():
         determine_stability(_games([]))
 
 
+def _rushing(values):
+    return pd.DataFrame({
+        'player_display_name': ['Test QB'] * len(values),
+        'week': list(range(1, len(values) + 1)),
+        'rushing_yards': values,
+    })
+
+
+def test_zero_mean_gives_no_stability_row():
+    """Stafford's rushing yards averaged exactly 0: CV was inf, and the
+    `Infinity` it wrote into his player file made the browser reject it."""
+    _, summary = determine_stability(_rushing([-2.0, 2.0, -1.0, 1.0, 0.0]))
+    assert 'rushing_yards' not in summary.index
+    assert np.isfinite(summary['cv']).all()
+
+
+def test_negative_mean_is_not_rated_stable():
+    """Kneel-downs give QBs negative rushing averages; a negative CV must not
+    fall under the HIGH threshold."""
+    _, summary = determine_stability(_rushing([-1.0, -2.0, -1.0, 0.0, -1.0]))
+    assert 'rushing_yards' not in summary.index
+
+
 def test_stability_rating_buckets():
     assert stability_rating(0.20) == 'HIGH'
     assert stability_rating(0.50) == 'MEDIUM'

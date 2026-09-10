@@ -32,6 +32,10 @@ export function HitRatePanel({ result }: { result: ProjectionResponse }) {
   const season = rates.find((r) => r.window === 'season')
   const divergence =
     career && season && season.games >= 3 ? Math.abs(season.rate - career.rate) : 0
+  // "Season" is the player's latest one, which before their first game of a
+  // new year is still last year — so name it rather than say "this season".
+  const labelFor = (r: HitRate) =>
+    r.window === 'season' && r.season ? `${r.season} season` : WINDOW_LABELS[r.window] ?? r.window
 
   return (
     <div className="rounded-2xl border border-border bg-surface p-5">
@@ -49,7 +53,7 @@ export function HitRatePanel({ result }: { result: ProjectionResponse }) {
         {rates.map((r) => (
           <li key={r.window}>
             <div className="flex items-center justify-between gap-3 text-xs">
-              <span className="text-text-muted">{WINDOW_LABELS[r.window] ?? r.window}</span>
+              <span className="text-text-muted">{labelFor(r)}</span>
               <span className="shrink-0 tabular text-text-muted">
                 <span className={clsx('font-bold', toneFor(r.rate))}>{r.hits}</span>
                 <span className="text-text-faint">/{r.games}</span>
@@ -74,7 +78,7 @@ export function HitRatePanel({ result }: { result: ProjectionResponse }) {
 
       {divergence >= 0.2 && season && career && (
         <p className="mt-4 rounded-lg bg-surface-2 px-3 py-2 text-[11px] leading-relaxed text-text-muted">
-          This season ({(season.rate * 100).toFixed(0)}%) is well clear of the career mark (
+          {season.season ? `The ${season.season} season` : 'This season'} ({(season.rate * 100).toFixed(0)}%) is well clear of the career mark (
           {(career.rate * 100).toFixed(0)}%) — usually a sign the player's role has changed, so
           the older games may not say much about the current one.
         </p>

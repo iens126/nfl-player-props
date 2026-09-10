@@ -15,13 +15,13 @@ sportsbook lines.
 
 Pick a player and an opponent, and GridEdge shows:
 
-- **Recent + season averages** for every prop stat that player actually has data for
+- **Recent + rolling averages** for every prop stat that player actually has data for — over their last 17 games, carried across seasons
 - **Player stability** — coefficient-of-variation-based consistency rating (HIGH / MEDIUM / LOW)
 - **Performance chart** — the player's output vs. what the selected defense allows, with Last 3 / 5 / 10 / Season / Career views and a prop-line reference line
 - **Game log** — full week-by-week table, with over/under games highlighted once a prop line is entered
-- **Defensive matchup** — the opponent's pass/run defense averages and live league rank (computed from the current season's team data)
+- **Defensive matchup** — the opponent's pass/run defense averages and live league rank (over each defense's last 17 games, carried across seasons)
 - **Prop analysis** — enter any line and get a projection with over/under probabilities, plus a plain-English explanation of how the number was produced
-- **Hit rates** — how often the player has actually cleared that line, over the last 3/5/10 games, this season, and their whole career
+- **Hit rates** — how often the player has actually cleared that line, over the last 3/5/10 games, their latest season, and their whole career
 - **Odds Board** — a plain list of DraftKings/FanDuel/BetMGM/Caesars lines for a whole game; click any row to open that player's history and projection (needs a free API key; see below)
 - **Model transparency** — every model explains what it looks at in plain language and links out to a description of the technique; the trained model reports its own measured accuracy on a season it never saw
 - **Pick tracking** — stake imaginary coins on any line and watch it settle itself from the game data, privately in your browser
@@ -196,7 +196,12 @@ the odds functions are served from the same domain as the app.
    DataFrames in memory for 6 hours so repeated requests don't re-fetch/re-parse.
    Season selection is dynamic (nflreadpy resolves the current season from
    today's date), so the app tracks the season rollover automatically instead
-   of a hardcoded year. A player's current team/position always comes from
+   of a hardcoded year. Form isn't scoped to a season at all: a player's form
+   (`find_player`) and each defense's tables (`recent_defense_rows`) are their
+   last 17 games (`ROLLING_GAMES`) across seasons, so a new season's games
+   join the list one at a time rather than replacing it at kickoff - a player
+   who hasn't played yet this year is still described by last season.
+   A player's current team/position always comes from
    the live roster (`load_rosters`), not their stat lines - stat lines only
    update once games are played, so during an offseason they'd otherwise
    still show a player's team from months-old games, missing any trades or
@@ -587,10 +592,12 @@ Things worth knowing:
 - **GitHub disables scheduled workflows on public repos after ~60 days of
   repository inactivity.** It emails a warning first. If the loop ever goes
   quiet during a long off-season, re-enable it from the Actions tab.
-- **Season rollover is the one predictable annual chore**, in early September.
-  nflverse resolves "current season" differently for stats (last completed
-  season) than for rosters (current roster year), and the precompute has to
-  pick correctly for each; the `CAREER_SEASONS` window also slides.
+- **Season rollover needs no switch-over.** Player and defense windows count
+  games across seasons, so kickoff just adds games to the end of each list.
+  Two things still move: the trained model validates on the latest season with
+  at least eight weeks played, so around week 8 its validation season changes
+  and the refresh's model-regression check can trip once - a change of
+  yardstick, not of model quality; and the `CAREER_SEASONS` window slides.
 - **Upstream schema changes** break the build rather than the site. The last
   good bundle keeps serving while you fix it — but only if you read the failure
   email.

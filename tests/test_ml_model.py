@@ -20,7 +20,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.data_loader import load_career_data  # noqa: E402
 from core.ml_model import (  # noqa: E402
+    MIN_HOLDOUT_WEEKS,
     _build_frame,
+    _holdout_season,
     _prior_ewma,
     features_for_next_game,
     get_model,
@@ -77,6 +79,20 @@ def test_validation_is_a_time_split_not_a_shuffle():
     assert holdout > first_season
     assert model.metrics['holdout_season'] == holdout
     assert model.metrics['val_rows'] > 100
+
+
+def test_a_new_seasons_first_weeks_are_not_the_holdout():
+    """Week 1 of a new season must not become the validation set.
+
+    At kickoff the newest season is a single game; validating on it left too
+    few rows to score and the model silently disappeared from the build.
+    """
+    full = pd.DataFrame({'season': 2025, 'week': range(1, 19)})
+    opener = pd.DataFrame({'season': 2026, 'week': [1, 1, 1]})
+    assert _holdout_season(pd.concat([full, opener])) == 2025
+
+    grown = pd.DataFrame({'season': 2026, 'week': range(1, MIN_HOLDOUT_WEEKS + 1)})
+    assert _holdout_season(pd.concat([full, grown])) == 2026
 
 
 def test_model_beats_the_naive_baseline():

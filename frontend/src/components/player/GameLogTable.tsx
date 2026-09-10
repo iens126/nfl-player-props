@@ -18,7 +18,7 @@ export function GameLogTable({
       <table className="w-full min-w-[520px] border-collapse text-sm">
         <thead>
           <tr className="border-b border-border bg-surface-2 text-left text-[11px] font-semibold uppercase tracking-wider text-text-faint">
-            <th className="px-3.5 py-3">Wk</th>
+            <th className="px-3.5 py-3">Game</th>
             <th className="px-3.5 py-3">Opp</th>
             {statCols.map((c) => (
               <th key={c} className="px-3.5 py-3 text-right tabular">
@@ -34,14 +34,18 @@ export function GameLogTable({
 
             return (
               <tr
-                key={row.week}
+                key={`${row.season}-${row.week}`}
                 className={clsx(
                   'border-b border-border-soft last:border-0',
                   hit === true && 'bg-over/[0.06]',
                   hit === false && 'bg-under/[0.06]',
                 )}
               >
-                <td className="px-3.5 py-2.5 font-semibold text-text">{row.week}</td>
+                {/* The log is the rolling form, which can cross a season, so
+                    every row names its season. */}
+                <td className="whitespace-nowrap px-3.5 py-2.5 font-semibold text-text">
+                  <span className="text-text-faint">'{String(row.season).slice(2)}</span> W{row.week}
+                </td>
                 <td className="px-3.5 py-2.5 text-text-muted">{row.opponent ?? '—'}</td>
                 {statCols.map((c) => {
                   const v = row[c]

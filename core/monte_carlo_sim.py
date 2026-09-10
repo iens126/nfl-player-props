@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 
 from core.data_loader import (
-    load_team_data, load_player_data, load_career_data,
+    recent_defense_rows, recent_defense_player_rows, load_career_data,
     find_player, pass_def, run_def, cached,
 )
 
@@ -56,8 +56,12 @@ N_SIMULATIONS = 10000
 
 
 def def_league_stats(stat_cat):
-    """League-wide average/std for a team-level stat (used for the QB z-score)."""
-    team_stats = load_team_data()
+    """League-wide average/std for a team-level stat (used for the QB z-score).
+
+    Taken over every defense's rolling window, the same games each defense's
+    own average comes from, so the z-score compares like with like.
+    """
+    team_stats = recent_defense_rows()
     avg = team_stats[stat_cat].mean()
     std = team_stats[stat_cat].std()
     return avg, std
@@ -65,17 +69,18 @@ def def_league_stats(stat_cat):
 
 def create_weight(name, def_team, stat_cat):
     """Matchup adjustment (see module docstring for the full methodology)."""
-    pos_values = find_player(name)['position'].unique()
-    if len(pos_values) == 0:
+    form = find_player(name)
+    if form.empty:
         raise ValueError(f"No data found for player '{name}'")
-    pos = pos_values[0]
+    # The latest game's position, as the browser engine reads it.
+    pos = form['position'].iloc[-1]
 
     if stat_cat not in STAT_MAP:
         raise ValueError(f"Unsupported stat category '{stat_cat}'")
 
     if pos == 'QB':
         k = POSITION_K['QB']
-        player_std = find_player(name)[stat_cat].std()
+        player_std = form[stat_cat].std() if stat_cat in form.columns else np.nan
         league_avg, league_std = def_league_stats(stat_cat)
         if STAT_MAP[stat_cat][1] == 'pass':
             team_avg = pass_def(def_team)[stat_cat].mean()
@@ -110,7 +115,8 @@ def _simulate(name, def_team, stat_cat, window=SIM_WINDOW, n_simulations=N_SIMUL
     if stat_cat not in df.columns:
         raise ValueError(f"'{stat_cat}' has no recorded data for {name}")
 
-    recent = df[df['week'] > df['week'].max() - window]
+    # By position in the list, not by week number: the window can cross seasons.
+    recent = df.tail(window)
     values = recent[stat_cat]
     if len(values) == 0:
         raise ValueError(f"Not enough recent games for {name} to run a projection")
@@ -176,9 +182,13 @@ _MIN_ROWS_FOR_RELIABILITY = 800
 
 
 def position_allowed(defense, position, stat_cat):
-    """Mean `stat_cat` this defense allows to `position`. 'NFL' = league average."""
+    """Mean `stat_cat` this defense allows to `position`. 'NFL' = league average.
+
+    Over the defense's rolling window (its last ROLLING_GAMES games, across
+    seasons), and for 'NFL' over every defense's window together.
+    """
     def _build():
-        stats = load_player_data()
+        stats = recent_defense_player_rows()
         rows = stats[stats['position'] == position]
         if defense != 'NFL':
             rows = rows[rows['opponent_team'] == defense]

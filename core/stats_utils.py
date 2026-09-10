@@ -69,9 +69,18 @@ def determine_stability(df):
                         z_thresh=2.5)
     names = df['player_display_name'].unique()
     player_name = names[0] if len(names) else None
-    means = df.mean(numeric_only=True)
-    stds = df.std(numeric_only=True)
-    cv = stds/means
+    # Prop stats only: the game rows also carry numeric bookkeeping (season)
+    # that has a mean and a spread but no stability to speak of.
+    stat_cols = [c for c in bettable_columns if c in df.columns]
+    means = df[stat_cols].mean(numeric_only=True)
+    stds = df[stat_cols].std(numeric_only=True)
+    # CV only means "relative swing" when the average is positive. A mean of
+    # exactly zero gives infinity, which json.dumps writes as a bare `Infinity`
+    # that the browser's JSON.parse rejects - that made Matthew Stafford's
+    # whole player file unloadable. A negative mean (kneel-down rushing yards)
+    # gives a negative CV, which the thresholds read as HIGH stability. Neither
+    # is a stability reading, so those stats are dropped like 0/0 already was.
+    cv = stds / means.where(means > 0)
 
     summary = pd.DataFrame({'mean':means,'std':stds,'cv':cv}).dropna()
     summary = summary.sort_values('cv', ascending=True)

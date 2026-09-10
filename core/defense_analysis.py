@@ -1,13 +1,14 @@
 """League-wide defensive aggregates and rankings, built from the same
 team_stats data source as pass_def()/run_def() in data_loader.py.
 
-Rankings are computed strictly from the currently loaded dataset (one
-season of team_stats) - nothing here is hardcoded or invented.
+Everything here covers each defense's rolling window - its last ROLLING_GAMES
+games, across seasons - so in week 1 a defense is still ranked on a full
+season's sample instead of the one game it has played. Nothing is hardcoded.
 """
 
 import pandas as pd
 
-from core.data_loader import load_team_data, pass_def, run_def
+from core.data_loader import recent_defense_rows, pass_def, run_def
 
 # For each stat, whether a *lower* value allowed is better defense (True) or
 # a *higher* value is better (e.g. more interceptions forced is good defense).
@@ -28,7 +29,7 @@ RECENT_WINDOW = 3
 
 
 def _league_pass_defense():
-    team_stats = load_team_data()
+    team_stats = recent_defense_rows()
     agg = team_stats.groupby('opponent_team').agg(
         completions=('completions', 'mean'),
         attempts=('attempts', 'mean'),
@@ -41,7 +42,7 @@ def _league_pass_defense():
 
 
 def _league_run_defense():
-    team_stats = load_team_data()
+    team_stats = recent_defense_rows()
     agg = team_stats.groupby('opponent_team').agg(
         carries=('carries', 'mean'),
         rushing_yards=('rushing_yards', 'mean'),
@@ -70,8 +71,8 @@ def _ranks_for_team(league_df, team, cols):
 
 def _weekly_records(df, cols):
     records = []
-    for _, row in df.sort_values('week').iterrows():
-        rec = {'week': int(row['week']), 'opponent': row['Opponent']}
+    for _, row in df.sort_values(['season', 'week']).iterrows():
+        rec = {'season': int(row['season']), 'week': int(row['week']), 'opponent': row['Opponent']}
         for c in cols:
             rec[c] = None if pd.isna(row[c]) else float(row[c])
         records.append(rec)
@@ -89,8 +90,8 @@ def defense_summary(team):
     pass_cols = ['completions', 'attempts', 'passing_yards', 'passing_tds', 'passing_interceptions', 'yards_per_att']
     rush_cols = ['carries', 'rushing_yards', 'rushing_tds', 'yards_per_car']
 
-    pass_recent = pdf.sort_values('week').tail(RECENT_WINDOW)
-    rush_recent = rdf.sort_values('week').tail(RECENT_WINDOW)
+    pass_recent = pdf.sort_values(['season', 'week']).tail(RECENT_WINDOW)
+    rush_recent = rdf.sort_values(['season', 'week']).tail(RECENT_WINDOW)
 
     league_pass = _league_pass_defense()
     league_run = _league_run_defense()
