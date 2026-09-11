@@ -11,10 +11,22 @@
 
 import type { HitRate, HitRateWindow, ProjectionResponse } from '../api/types'
 import type { Aggregates, GameRow, ModelsFile, TrainedModelFile } from './bundle'
-import { MAX_WINDOW, recencyWeights, runModel, weightedMoments } from './models'
+import { OFFSEASON_GAP_GAMES, decayWeights, runModel, weightedMoments } from './models'
 import { clamp, quantileFromSorted } from './numerics'
 
 const MODEL_KEYS = ['ensemble', 'lognormal', 'negbin', 'empirical', 'triangular'] as const
+
+/**
+ * A model's P(over) through its calibration map, as core/calibration.py
+ * apply_map() does it: p' = sigmoid(a * logit(p) + b). No map, no change.
+ */
+export function calibrated(models: ModelsFile, stat: string, key: string, p: number): number {
+  const ab = models.calibration?.[stat]?.[key]
+  if (!ab) return p
+  const q = clamp(p, 1e-4, 1 - 1e-4)
+  const z = ab[0] * Math.log(q / (1 - q)) + ab[1]
+  return 1 / (1 + Math.exp(-z))
+}
 
 /** Sample standard deviation (pandas .std() default, ddof=1). */
 function sampleStd(values: number[]): number {
@@ -37,9 +49,11 @@ function statValues(games: GameRow[], stat: string): number[] {
  * an empty history.
  */
 function formGames(games: GameRow[], rollingGames: number): GameRow[] {
-  return [...games]
-    .sort((a, b) => Number(a.season) - Number(b.season) || Number(a.week) - Number(b.week))
-    .slice(-rollingGames)
+  return chronological(games).slice(-rollingGames)
+}
+
+function chronological(games: GameRow[]): GameRow[] {
+  return [...games].sort((a, b) => Number(a.season) - Number(b.season) || Number(a.week) - Number(b.week))
 }
 
 /**
@@ -147,14 +161,19 @@ export function hitRates(games: GameRow[], stat: string, line: number): HitRate[
 // Trained model inference
 // ---------------------------------------------------------------------------
 
-/** pandas ewm(halflife=h, adjust=True).mean(), taking the final value. */
-function ewmaLast(values: number[], halfLife: number): number {
+/**
+ * The offseason-aware EWMA the trained model learned from (_prior_ewma), seen
+ * from the next game: a game's age is games back plus OFFSEASON_GAP_GAMES for
+ * every offseason in between. With no gap this is pandas' ewm(halflife).
+ */
+function ewmaLast(values: number[], seasons: number[], halfLife: number): number {
   if (values.length === 0) return 0
-  const alpha = 1 - Math.exp(-Math.LN2 / halfLife)
+  const last = seasons[seasons.length - 1]
   let numerator = 0
   let denominator = 0
   for (let i = 0; i < values.length; i++) {
-    const weight = Math.pow(1 - alpha, values.length - 1 - i)
+    const age = values.length - 1 - i + OFFSEASON_GAP_GAMES * (last - seasons[i])
+    const weight = Math.pow(0.5, age / halfLife)
     numerator += weight * values[i]
     denominator += weight
   }
@@ -171,14 +190,15 @@ function mlFeatures(
   if (values.length === 0) return null
 
   const last = games[games.length - 1]
+  const seasons = games.map((g) => Number(g.season))
   const position = String(last.position ?? '')
   // The next game's week: a player last seen in an earlier season opens this
   // one in week 1, not week 19. Mirrors features_for_next_game().
   const nextWeek = Number(last.season) < aggregates.constants.current_season ? 1 : Number(last.week) + 1
 
   const row: Record<string, number> = {
-    form_short: ewmaLast(values, 3),
-    form_long: ewmaLast(values, 8),
+    form_short: ewmaLast(values, seasons, 3),
+    form_long: ewmaLast(values, seasons, 8),
     career_avg: values.reduce((a, b) => a + b, 0) / values.length,
     career_std: values.length > 1 ? sampleStd(values) : 0,
     games_played: values.length,
@@ -195,8 +215,8 @@ function mlFeatures(
       const v = g[column]
       return typeof v === 'number' && !Number.isNaN(v) ? v : 0
     })
-    row[`usage_${column}_short`] = ewmaLast(usage, 3)
-    row[`usage_${column}_long`] = ewmaLast(usage, 8)
+    row[`usage_${column}_short`] = ewmaLast(usage, seasons, 3)
+    row[`usage_${column}_long`] = ewmaLast(usage, seasons, 8)
   }
 
   const vector: number[] = []
@@ -258,31 +278,37 @@ export function project(input: ProjectInput): ProjectionResponse {
 
   if (!constants.stat_map[stat]) throw new Error(`Unsupported stat category '${stat}'`)
 
-  const form = formGames(games, constants.rolling_games)
-  const values = statValues(form, stat).slice(-MAX_WINDOW)
+  // Every game the player has, weighted by age rather than cut off at a window:
+  // weights halve every HALF_LIFE_GAMES games back, and each offseason in
+  // between adds OFFSEASON_GAP_GAMES. Recent form leads, but a proven career
+  // never drops to zero. Mirrors _window() in core/projection.py.
+  const ordered = chronological(games)
+  const played = ordered.filter((g) => typeof g[stat] === 'number' && !Number.isNaN(g[stat]))
+  const values = played.map((g) => g[stat] as number)
   if (values.length === 0) {
     throw new Error(`Not enough recent games for ${player} to run a projection`)
   }
 
-  const weights = recencyWeights(values.length)
-  const shift = createWeight(games, opponent, stat, aggregates)
+  const weights = decayWeights(played.map((g) => Number(g.season)))
+  const shift = createWeight(ordered, opponent, stat, aggregates)
   const { mean: rawMean, ess } = weightedMoments(values, weights)
 
+  // Every probability goes through the shipped calibration map first.
   const alternatives: Record<string, number> = {}
   for (const key of MODEL_KEYS) {
-    alternatives[key] = runModel(key, values, weights, line, stat, shift).probOver
+    alternatives[key] = calibrated(models, stat, key, runModel(key, values, weights, line, stat, shift).probOver)
   }
 
   // The trained model, when it applies to this stat and player.
   const trained = models.models[stat]
   let ml: { projection: number; probOver: number; std: number } | null = null
   if (trained) {
-    const features = mlFeatures(games, opponent, stat, trained, aggregates)
+    const features = mlFeatures(ordered, opponent, stat, trained, aggregates)
     if (features) {
       const prediction = mlPredict(trained, features)
       ml = {
         projection: prediction,
-        probOver: mlProbOver(trained, prediction, line),
+        probOver: calibrated(models, stat, 'ml', mlProbOver(trained, prediction, line)),
         std: mlSpread(trained, prediction),
       }
       alternatives.ml = ml.probOver
@@ -308,8 +334,11 @@ export function project(input: ProjectInput): ProjectionResponse {
     modelLabel = 'Trained ridge regression'
   } else {
     const result = runModel(input.model, values, weights, line, stat, shift)
+    const calKey = input.model === 'poisson'
+      ? 'negbin'
+      : (MODEL_KEYS as readonly string[]).includes(input.model) ? input.model : 'ensemble'
     projection = result.projection
-    probOver = result.probOver
+    probOver = calibrated(models, stat, calKey, result.probOver)
     std = result.std
     modelKey = result.model
     modelLabel = result.label
@@ -330,7 +359,7 @@ export function project(input: ProjectInput): ProjectionResponse {
     std_dev: std,
     window_games: values.length,
     alternatives,
-    hit_rates: hitRates(games, stat, line),
+    hit_rates: hitRates(ordered, stat, line),
     ml_projection: ml ? ml.projection : null,
   }
 }

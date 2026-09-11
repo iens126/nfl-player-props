@@ -687,9 +687,10 @@ function ProjectionExplainer({ result }: { result: ProjectionResponse }) {
   return (
     <div className="space-y-3">
       <p>
-        The model starts from {result.player}'s last {result.window_games} games of{' '}
+        The model starts from all {result.window_games} of {result.player}'s games of{' '}
         {statLabel(result.stat)}, weighted so recent games count for more — weights halve every
-        three games back. That comes to an effective sample of about{' '}
+        six games back, and each offseason in between counts as eight more. That comes to an
+        effective sample of about{' '}
         <span className="tabular font-semibold text-text">{result.effective_games.toFixed(1)}</span>{' '}
         games, with a form average of{' '}
         <span className="tabular font-semibold text-text">{result.form_average.toFixed(1)}</span>.

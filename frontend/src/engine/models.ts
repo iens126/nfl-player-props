@@ -13,8 +13,10 @@
 
 import { clamp, lgamma, mean as arrayMean, normalSf } from './numerics'
 
-export const HALF_LIFE_GAMES = 3.0
-export const MAX_WINDOW = 10
+/** Weights halve every this many games back. */
+export const HALF_LIFE_GAMES = 6.0
+/** Each offseason between two games ages the older one by this many games. */
+export const OFFSEASON_GAP_GAMES = 8.0
 
 export const PRIOR_CV = 0.7
 export const PRIOR_DISPERSION = 1.3
@@ -47,6 +49,22 @@ export function recencyWeights(n: number, halfLife = HALF_LIFE_GAMES): number[] 
     const age = n - 1 - i // most recent game has age 0
     raw.push(Math.pow(0.5, age / Math.max(halfLife, EPS)))
   }
+  const total = raw.reduce((a, b) => a + b, 0)
+  return raw.map((w) => w / total)
+}
+
+/**
+ * Weights for a player's whole history, oldest -> newest, given each game's
+ * season. Mirrors decay_weights() in core/projection_models.py: age is games
+ * back plus OFFSEASON_GAP_GAMES for every offseason in between.
+ */
+export function decayWeights(
+  seasons: number[], halfLife = HALF_LIFE_GAMES, gap = OFFSEASON_GAP_GAMES,
+): number[] {
+  const n = seasons.length
+  if (n === 0) return []
+  const last = seasons[n - 1]
+  const raw = seasons.map((s, i) => Math.pow(0.5, (n - 1 - i + gap * (last - s)) / Math.max(halfLife, EPS)))
   const total = raw.reduce((a, b) => a + b, 0)
   return raw.map((w) => w / total)
 }

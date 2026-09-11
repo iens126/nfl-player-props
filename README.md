@@ -78,6 +78,31 @@ matchup weight and hit rate.
 If you change the maths: change the Python first, regenerate the bundle, then
 mirror it in TypeScript until the fixtures pass again.
 
+### How much history the models use
+
+Every model reads a player's whole career rather than a fixed "last N games"
+window, weighted by age: weights halve every **6 games** back
+(`HALF_LIFE_GAMES`), and each offseason in between counts as **8 more games**
+(`OFFSEASON_GAP_GAMES`). The trained model's form and usage features use the
+same offseason rule. Recent form leads; a proven career never drops to zero.
+
+Both numbers came from a backtest - picked on 2022-24 games, confirmed on
+2025-26 games never used to pick them. Against the previous last-10-games,
+half-life-3 window the ensemble's error fell 1.2-1.8% and the trained model's
+0.6-1.8%, with the largest gains in the first weeks of a season. A longer
+half-life only helps together with the offseason gap.
+
+### Calibration
+
+Checked out of sample, every model overstated overs at the lines people
+actually price. `core/calibration.py` fits a two-number Platt map per stat and
+model, `p' = sigmoid(a * logit(p) + b)`, on the trained model's holdout season,
+using both player-relative lines and a fixed ladder with equal weight. The maps
+ship in `models.json` and the browser applies them exactly as Python does; the
+parity fixtures include them. For the trained model the fit is a trade-off -
+better at lines near a player's range, slightly worse at far-off fixed lines -
+which the docstring spells out.
+
 ## Tech stack
 
 - **Frontend:** React + TypeScript + Vite + Tailwind CSS v4, Headless UI, Recharts

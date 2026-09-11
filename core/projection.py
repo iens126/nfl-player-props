@@ -16,11 +16,12 @@ import logging
 
 import numpy as np
 
+from core.calibration import SPECIFIED_MODELS, calibrate
 from core.data_loader import find_player, find_player_career
 from core.ml_model import features_for_next_game, get_model
 from core.monte_carlo_sim import create_weight, STAT_MAP
 from core.projection_models import (
-    MAX_WINDOW, MODELS, DEFAULT_MODEL, recency_weights, run_model, weighted_moments,
+    MODELS, DEFAULT_MODEL, decay_weights, run_model, weighted_moments,
 )
 
 # Windows the hit-rate breakdown is reported over. "How often has he actually
@@ -72,20 +73,21 @@ def hit_rates(name, stat_cat, line):
 
 
 def _window(name, stat_cat):
-    """The player's most recent games for `stat_cat`, oldest -> newest.
+    """Every game the player has for `stat_cat`, oldest -> newest, and its season.
 
-    The last MAX_WINDOW of their rolling form, wherever those games fell: a
-    player's first game of a new season joins the end of last season's list.
+    Not cut off at a window: decay_weights() fades old games instead, so recent
+    form leads while a proven career never drops out entirely. A player's first
+    game of a new season simply joins the end of the list.
     """
-    df = find_player(name)
-    if stat_cat not in df.columns:
+    if stat_cat not in find_player(name).columns:
         raise ValueError(f"'{stat_cat}' has no recorded data for {name}")
 
-    series = df.sort_values(['season', 'week'])[stat_cat].dropna()
-    values = series.tail(MAX_WINDOW).to_numpy(dtype=float)
+    career = find_player_career(name)
+    played = career[career[stat_cat].notna()]
+    values = played[stat_cat].to_numpy(dtype=float)
     if len(values) == 0:
         raise ValueError(f"Not enough recent games for {name} to run a projection")
-    return values
+    return values, played['season'].to_numpy(dtype=float)
 
 
 def project(name, def_team, stat_cat, line, model=DEFAULT_MODEL):
@@ -97,14 +99,17 @@ def project(name, def_team, stat_cat, line, model=DEFAULT_MODEL):
     if stat_cat not in STAT_MAP:
         raise ValueError(f"Unsupported stat category '{stat_cat}'")
 
-    values = _window(name, stat_cat)
-    weights = recency_weights(len(values))
+    values, seasons = _window(name, stat_cat)
+    weights = decay_weights(seasons)
     shift = create_weight(name, def_team, stat_cat)
     raw_mean, _var, ess = weighted_moments(values, weights)
 
+    # Every probability is calibrated (core/calibration.py) before anyone sees
+    # it. Only models that actually ran are listed: 'ml' used to fall through
+    # run_model() to the ensemble and appear under the trained model's name.
     alternatives = {
-        key: round(run_model(key, values, weights, line, stat_cat, shift).prob_over, 6)
-        for key in MODELS
+        key: round(calibrate(stat_cat, key, run_model(key, values, weights, line, stat_cat, shift).prob_over), 6)
+        for key in SPECIFIED_MODELS
     }
 
     ml = _ml_projection(name, def_team, stat_cat, line)
@@ -121,7 +126,9 @@ def project(name, def_team, stat_cat, line, model=DEFAULT_MODEL):
         model_key, model_label = 'ml', ml['label']
     else:
         result = run_model(model, values, weights, line, stat_cat, shift)
-        projection, prob_over, std = result.projection, result.prob_over, result.std
+        cal_key = 'negbin' if model == 'poisson' else (model if model in SPECIFIED_MODELS else DEFAULT_MODEL)
+        projection, std = result.projection, result.std
+        prob_over = calibrate(stat_cat, cal_key, result.prob_over)
         model_key = result.model if model == DEFAULT_MODEL else model
         model_label = result.label
 
@@ -156,7 +163,7 @@ def _ml_projection(name, def_team, stat_cat, line):
         prediction = float(trained.predict(features)[0])
         return {
             'projection': prediction,
-            'prob_over': trained.prob_over(prediction, line),
+            'prob_over': calibrate(stat_cat, 'ml', trained.prob_over(prediction, line)),
             'std_dev': trained.spread(prediction),
             'label': 'Trained ridge regression',
         }

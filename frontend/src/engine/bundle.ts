@@ -49,7 +49,7 @@ export interface Constants {
   position_k: Record<string, number>
   default_k: number
   half_life_games: number
-  max_window: number
+  offseason_gap_games: number
   bettable_columns: string[]
   /** The season being played (calendar), not the one the form window covers. */
   current_season: number
@@ -83,6 +83,8 @@ export interface TrainedModelFile {
 export interface ModelsFile {
   models: Record<string, TrainedModelFile>
   catalog: unknown[]
+  /** stat -> model -> [a, b]: p' = sigmoid(a * logit(p) + b). See core/calibration.py. */
+  calibration?: Record<string, Record<string, [number, number]>>
 }
 
 export interface Reference {

@@ -91,6 +91,19 @@ export default function Methodology() {
               real historical errors that would have cleared your line.
             </p>
             <p>
+              <span className="font-semibold text-text">Calibration.</span> Checked on games
+              none of the models had seen, every model was overstating overs at the lines people
+              actually price — at a player's typical line, receiving yardage cleared 42% of the time
+              while the models said 47–48%. So every probability on this site now passes through a
+              small correction per stat and model before you see it, fitted on the one season the
+              trained model never learned from. It is fitted on both kinds of line the app prices —
+              lines near a player's own range, and a fixed ladder across the stat's range — so
+              fixing one doesn't break the other. It never changes which of two lines is more likely
+              to clear. For the trained model it involves a real trade: lines near a player's range
+              get more honest, at a small cost on far-off lines like a 100-yard line for a fourth
+              receiver.
+            </p>
+            <p>
               <span className="font-semibold text-text">How good is it?</span> The panel next
               to each projection reports the model's typical miss, how much of the
               game-to-game variation it explains, and its calibration — whether a stated 40%
@@ -152,9 +165,12 @@ export default function Methodology() {
           <div className="space-y-3 text-sm leading-relaxed text-text-muted">
             <p>
               <span className="font-semibold text-text">1. Recency-weighted form.</span> The model
-              takes the player's last 10 games for the selected stat and weights them so recent
-              games count for more — weights halve every three games back. This keeps the model
-              responsive to current form without letting a single game define the whole picture.
+              takes every game the player has for the selected stat and weights them so recent
+              games count for more — weights halve every six games back, and an offseason in
+              between counts as eight more games. Recent form leads, but a proven career never
+              drops out entirely, which a fixed "last N games" window would do the moment it slid
+              past. Both numbers were chosen by backtest and confirmed on later games they were
+              never tuned on.
               The <span className="font-medium text-text">effective sample size</span> shown with a
               projection is what that weighting leaves in statistical terms.
             </p>

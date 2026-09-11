@@ -49,7 +49,7 @@ from core.monte_carlo_sim import (
     POSITION_K, DEFAULT_K, STAT_MAP, position_allowed, signal_reliability,
 )
 from core.ml_model import USAGE_COLUMNS
-from core.projection_models import HALF_LIFE_GAMES, MAX_WINDOW
+from core.projection_models import HALF_LIFE_GAMES, OFFSEASON_GAP_GAMES
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("precompute")
@@ -311,7 +311,7 @@ def build_aggregates(writer: Writer, teams: list[str], positions: list[str]) -> 
             'position_k': POSITION_K,
             'default_k': DEFAULT_K,
             'half_life_games': HALF_LIFE_GAMES,
-            'max_window': MAX_WINDOW,
+            'offseason_gap_games': OFFSEASON_GAP_GAMES,
             'bettable_columns': bettable_columns,
             # The season being played. Form windows don't depend on it - they
             # count games across seasons - but the trained model's "week of
@@ -362,9 +362,20 @@ def build_models(writer: Writer) -> dict:
         }
         metrics[stat] = trained.metrics
 
+    # Calibration maps for every model, per stat (core/calibration.py): fitted
+    # on each trained model's holdout season, applied in the browser as-is.
+    from core.calibration import get_calibration
+    calibration = {}
+    for stat in models:
+        maps = get_calibration(stat)
+        if maps:
+            calibration[stat] = {key: list(ab) for key, ab in maps.items()}
+    logger.info("    calibrated %d of %d stats", len(calibration), len(models))
+
     writer.write('models.json', {
         'models': models,
         'catalog': [_as_json(m) for m in list_models(stat=None)],
+        'calibration': calibration,
     })
     return metrics
 

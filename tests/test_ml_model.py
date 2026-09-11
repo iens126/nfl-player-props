@@ -42,6 +42,7 @@ def test_features_never_see_the_game_they_predict():
     """
     frame = pd.DataFrame({
         'player_display_name': ['A'] * 6,
+        'season': [2025] * 6,
         'value': [10.0, 10.0, 10.0, 1000.0, 10.0, 10.0],
     })
     ewma = _prior_ewma(frame, 'value', 3)
@@ -52,6 +53,13 @@ def test_features_never_see_the_game_they_predict():
     assert ewma.iloc[4] > 100, "the outlier should affect the *next* game's feature"
     # The first row has nothing before it.
     assert pd.isna(ewma.iloc[0])
+
+    # The same outlier one offseason earlier still counts - it's a real game -
+    # but carries less next to this season's games than it would within one
+    # season. (Row 5, not row 4: with every earlier game in last season, the
+    # gap ages them all equally and cancels, as it should.)
+    across = frame.assign(season=[2024, 2024, 2024, 2024, 2025, 2025])
+    assert 20 < _prior_ewma(across, 'value', 3).iloc[5] < ewma.iloc[5]
 
 
 def test_training_frame_features_are_backward_looking():
